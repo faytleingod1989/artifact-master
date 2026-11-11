@@ -1,0 +1,38 @@
+{
+  "recordedAt": "2026-10-04 Asia/Shanghai",
+  "command": "node scripts/benchmark-program-optimization.mjs",
+  "environment": { "node": "v24.14.0", "platform": "win32", "arch": "x64", "osRelease": "10.0.22631", "cpu": "AMD Ryzen 5 5600X 6-Core Processor", "vite": "8.1.5" },
+  "method": "Vite SSR loads preserved pre-change snapshot and optimized actual source in one process. Fixed synthetic 1000/5000 records and 20 drafts; one warm-up per operation. Pure compute only, no DOM/OCR/profile/network. Historical 2026-10-03 sample was not saved: these are paired new reproducible samples using the same method and sizes, not the exact unsaved historical records.",
+  "samples": [
+    {
+      "size": 1000, "drafts": 20, "rounds": 5, "equivalentSortCases": 18, "equivalentDuplicateCases": 20,
+      "cvSortBeforeMs": [50.814, 48.947, 47.464, 46.303, 53.638],
+      "cvSortAfterMs": [3.989, 4.117, 3.757, 4.485, 3.952],
+      "duplicateBatchBeforeMs": [172.596, 163.609, 146.902, 160.401, 165.787],
+      "duplicateBatchColdAfterMs": [8.005, 7.564, 6.043, 6.283, 6.424],
+      "duplicateBatchIndexedAfterMs": [0.056, 0.037, 0.036, 0.037, 0.036],
+      "editBatchBeforeMs": [183.014, 166.986, 164.460, 155.264, 153.474],
+      "editBatchCachedAfterMs": [0.042, 0.016, 0.012, 0.006, 0.006]
+    },
+    {
+      "size": 5000, "drafts": 20, "rounds": 3, "equivalentSortCases": 18, "equivalentDuplicateCases": 20,
+      "cvSortBeforeMs": [408.970, 404.415, 384.389],
+      "cvSortAfterMs": [22.952, 22.772, 24.095],
+      "duplicateBatchBeforeMs": [1124.145, 897.582, 918.709],
+      "duplicateBatchColdAfterMs": [37.490, 48.535, 38.645],
+      "duplicateBatchIndexedAfterMs": [0.053, 0.040, 0.037],
+      "editBatchBeforeMs": [950.861, 965.165, 962.990],
+      "editBatchCachedAfterMs": [0.043, 0.015, 0.011]
+    }
+  ],
+  "equivalence": "Per size: 3 sort modes x 6 filter cases, 20 duplicate ID lists including legacy/unknown paths; asserts original references and no mutation. Unit tests also cover tied IDs, unknown metrics, reordered substats, repeated ID order, parseable-invalid old values, setKey precedence and cache invalidation.",
+  "redEvidence": [
+    { "test": "duplicate comparison preserves ID order and unknown fields without allocating draft UUIDs", "before": "randomUUID called 5 times instead of zero" },
+    { "test": "CV sorting parses each accepted record once", "before": "118 subs reads instead of 80" },
+    { "test": "confirmation pauses countdown and returning refreshes the elapsed cooldown without a request", "before": "timer count 1 instead of zero in confirmation" },
+    { "test": "editing a draft reuses the unchanged inventory duplicate index", "before": "2 inventory main reads instead of zero" }
+  ],
+  "greenEvidence": "2026-10-04 16:24:28 local, four related Vitest files: 45/45 passed; launcher dry-run test: 1/1 passed, public/old-only fixture returns 1, exact personal fixture returns 0 without execution. Real workspace dry-run returns 1 MISSING because new optimized personal package not yet built.",
+  "limitations": "Not browser interaction/P95 or production OCR/game/profile upgrade validation. No packaging, full suite, real UID or user profile access performed by this subtask. WeakMap draft caching assumes immutable draft objects, as current DraftFields provides. Inventory memoization invalidates on array identity changes. DraftFields still performs its inexpensive own validation on parent renders; only index lookup and review-derived calculations are cached. Existing package files remain unchanged.",
+  "launcherFinalVerification": "2026-10-05: both cscript VBS and actual CMD dry-run fixtures verify missing public/old-only state exits 1 and exact personal fixture exits 0; no app launched. CMD uses same-basename %~dpn0.vbs to avoid UTF-8 Chinese literal decoding in cp936. Actual workspace CMD dry-run resolved exact 20261004 target, MISSING exit 1 before parent packaging."
+}

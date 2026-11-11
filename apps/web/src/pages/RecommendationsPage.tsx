@@ -1,0 +1,16 @@
+import { ARTIFACT_SLOTS, type ArtifactRecord } from '../artifacts/types'
+import { ArtifactGlyph } from '../components/ArtifactGlyph'
+import { scoreArtifact, scoreReason, type BuildRecommendation, type ScoringOptions } from '../scoring'
+import { parseStat } from '../artifacts/statModel'
+import { BuildControls } from '../characters/BuildControls'
+import { setPlanLabel } from '../characters/setPlanLabel'
+
+export function RecommendationsPage({ characterName, picks, score, missingSlots, disabled, onCharacter, onView, onQueue, recommendation, scoringOptions = {}, onScoringChange }: { characterName: string; picks: ArtifactRecord[]; score: number; missingSlots: number; disabled: boolean; onCharacter: () => void; onView: (id: number) => void; onQueue: (ids: number[]) => void; recommendation?: BuildRecommendation; scoringOptions?: ScoringOptions; onScoringChange?: (options: ScoringOptions) => void }) {
+  return <section className="page-panel">
+    <div className="page-summary"><div><p className="page-eyebrow">当前选择：{characterName}</p><h2>{characterName} · 规则初评候选</h2><p className="page-note">按所选玩法的主词条与相对权重选择，优先凑齐可用的建议套装。规则分不是伤害或提升百分比，也不是全局最优解。</p></div><div className="page-metrics"><span>规则总分<strong>{score}</strong></span><span>缺失部位<strong>{missingSlots}/5</strong></span></div></div>
+    <BuildControls name={characterName} options={scoringOptions} onChange={onScoringChange} />
+    {recommendation && <section className="recommendation-status" aria-label="候选套装状态"><h3>{recommendation.setComplete && recommendation.setPlan ? `已凑齐：${setPlanLabel(recommendation.setPlan)}` : scoringOptions.setMode === 'any' ? '当前不限套装' : '当前为散件候选'}</h3><p className="page-note">实际件数：{recommendation.setCounts.map(row => `${row.name}×${row.count}`).join('、') || '暂无候选'}。条件效果需按队伍及操作核实，不自动视为生效。</p>{recommendation.setPlan && <p className="page-note">{recommendation.setPlan.condition}</p>}{recommendation.warnings.map(text => <p className="profile-warning" key={text}>{text}</p>)}</section>}
+    <div className="page-actions"><button className="secondary-button" onClick={onCharacter}>更换角色</button><button className="primary-button" disabled={disabled || !picks.some(item => item.level < 20)} onClick={() => onQueue(picks.filter(item => item.level < 20).map(item => item.id))}>候选加入强化队列</button></div>
+    <div className="candidate-grid">{ARTIFACT_SLOTS.map(slot => { const record = picks.find(item => item.slot === slot); return <article className="candidate-card" key={slot}><p className="page-eyebrow">{slot}</p>{record ? <><ArtifactGlyph artifact={record} /><h3>{record.name}</h3><p>{record.set} · +{record.level}</p><strong className="candidate-main">{record.main}</strong><ul>{record.subs.map((sub, index) => <li key={index}>{sub}</li>)}</ul><p className="candidate-score">规则评分 {scoreArtifact(record, characterName, scoringOptions)}</p><p className="page-note">{scoreReason(record, characterName, scoringOptions)}</p>{(!parseStat(record.main) || record.subs.some(sub => !parseStat(sub))) && <p className="page-note">含未解析旧词条，规则分数仅供参考。</p>}<button className="secondary-button" onClick={() => onView(record.id)}>查看库存件</button></> : <><h3>暂无候选</h3><p className="page-note">仓库中尚无该部位，可返回仓库录入。</p></>}</article> })}</div>
+  </section>
+}

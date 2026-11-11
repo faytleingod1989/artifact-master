@@ -1,0 +1,3 @@
+.character-avatar,.asset-preview{flex-shrink:0;aspect-ratio:1}
+.character-avatar .character-portrait-image,.asset-preview .character-portrait-image{width:100%;height:100%;object-fit:contain;object-position:center}
+.character-portrait-missing{display:grid;width:100%;height:100%;place-items:center;color:#c5ba9b;background:#162638;font-size:18px}

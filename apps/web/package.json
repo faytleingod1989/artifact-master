@@ -1,0 +1,81 @@
+{
+  "name": "artifact-master",
+  "private": true,
+  "version": "0.1.0",
+  "description": "本地圣遗物管理与配装推荐工具",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "playwright test -c playwright.config.ts",
+    "test:electron": "node --test electron/*.test.cjs",
+    "test:desktop-offline": "node tests/electron-offline-smoke.mjs",
+    "prepare:ocr": "node ../../scripts/prepare-local-ocr.mjs",
+    "prepare:ocr:download": "node ../../scripts/prepare-local-ocr.mjs --download",
+    "test:ocr-real": "node ../../scripts/benchmark-artifact-ocr.mjs",
+    "verify:artifact-release": "node ../../scripts/verify-artifact-release.mjs",
+    "verify:artifact-local": "node ../../scripts/verify-artifact-local.mjs",
+    "verify:ocr-local": "node ../../scripts/verify-local-ocr-resources.mjs",
+    "verify:ocr-native": "node ../../scripts/verify-native-ocr.mjs",
+    "build:local": "npm run prepare:ocr && tsc -b && vite build --mode personal --outDir dist-local",
+    "build": "npm run prepare:ocr && tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "desktop:build": "npm run build && npm run verify:artifact-release && node ../../scripts/verify-local-ocr-resources.mjs dist && npm run verify:ocr-native && electron-builder --win portable --x64",
+    "desktop:build:local": "npm run build:local && npm run verify:artifact-local && npm run verify:ocr-local && npm run verify:ocr-native && electron-builder --config electron-builder.local.cjs --win portable --x64"
+  },
+  "dependencies": {
+    "idb-keyval": "^6.3.0",
+    "lucide-react": "^1.27.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tesseract.js": "^7.0.0"
+  },
+  "build": {
+    "appId": "com.local.artifactmaster",
+    "productName": "圣遗物管理大师",
+    "artifactName": "ArtifactMaster-${version}-rapidocr-20261017-public.${ext}",
+    "electronDist": "node_modules/electron/dist",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/main.cjs", "electron/preload.cjs", "electron/enkaClient.cjs", "electron/enkaIpc.cjs", "electron/captureIpc.cjs", "electron/entryUrl.cjs", "electron/nativeOcrClient.cjs", "electron/nativeWindowFrameClient.cjs", "electron/nativePageScanClient.cjs", "electron/pageScanIpc.cjs", "electron/ocrIpc.cjs",
+      "package.json"
+    ],
+    "extraResources": [{ "from": "native-ocr/runtime/ArtifactOcrWorker", "to": "ocr-native", "filter": ["**/*"] }, { "from": "native-capture", "to": "capture-native", "filter": ["*.ps1"] }],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.0.4",
+    "@playwright/test": "^1.63.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.3",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^29.1.1",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1",
+    "vitest": "^4.1.10"
+  }
+}

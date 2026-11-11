@@ -1,0 +1,7 @@
+.library-edit-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+.library-save-state { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.queue-item > div:nth-child(2) { flex: 1; }
+.queue-remove { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 30px; min-height: 30px; border: 1px solid var(--line); border-radius: 5px; background: #0a1728; color: var(--ink); }
+.queue-feedback { min-height: 1.5em; margin: 8px 0 0; color: var(--gold-hi); font-size: 12px; line-height: 1.5; }
+.queue-more:disabled { opacity: .45; cursor: default; }
+@media (max-width: 520px) { .upgrade-queue .queue-list { grid-template-columns: 1fr; } }

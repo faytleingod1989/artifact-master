@@ -1,0 +1,23 @@
+import { afterEach, expect, test, vi } from 'vitest'
+afterEach(() => { vi.unstubAllEnvs(); vi.resetModules() })
+test.each(['production', 'staging', 'local'])('public/unapproved %s never resolves a private game portrait', async mode => {
+  vi.stubEnv('DEV', false); vi.stubEnv('MODE', mode); vi.resetModules()
+  const { getGameCharacterPortrait } = await import('./portraits')
+  expect(getGameCharacterPortrait('雷电将军')).toBeUndefined()
+  expect(getGameCharacterPortrait('月之少女·哥伦比娅')).toBeUndefined()
+  expect(getGameCharacterPortrait('薇斯纳')).toBeUndefined()
+  expect(getGameCharacterPortrait('沃雅妮莎')).toBeUndefined()
+})
+test('personal build resolves the exact character and never substitutes an unknown character', async () => {
+  vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'personal'); vi.resetModules()
+  const { getGameCharacterPortrait } = await import('./portraits')
+  expect(getGameCharacterPortrait('雷电将军')).toContain('UI_AvatarIcon_Shougun.png')
+  expect(getGameCharacterPortrait('木偶·桑多涅')).toContain('UI_AvatarIcon_MarionetteNew.png')
+  expect(getGameCharacterPortrait('薇斯纳')).toContain('HoYoWiki_11661.png')
+  expect(getGameCharacterPortrait('沃雅妮莎')).toContain('HoYoWiki_11702.png')
+  expect(getGameCharacterPortrait('迪卢克')).toContain('UI_AvatarIcon_Diluc.png')
+  expect(getGameCharacterPortrait('埃洛伊')).toContain('UI_AvatarIcon_Aloy.png')
+  expect(getGameCharacterPortrait('旅行者')).toContain('UI_AvatarIcon_PlayerBoy.png')
+  expect(getGameCharacterPortrait('丝柯克')).toContain('UI_AvatarIcon_SkirkNew.png')
+  expect(getGameCharacterPortrait('未知角色')).toBeUndefined()
+})

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="素材缺失占位图">
+  <rect width="256" height="256" rx="24" fill="#1d2939"/>
+  <path d="M64 176 112 128l28 28 20-20 32 40H64Z" fill="#52677d"/>
+  <circle cx="108" cy="96" r="16" fill="#73889d"/>
+  <path d="M128 48v112M72 104h112" stroke="#d5b36d" stroke-width="10" stroke-linecap="round"/>
+  <text x="128" y="220" fill="#c6d0da" font-family="sans-serif" font-size="18" text-anchor="middle">素材缺失</text>
+</svg>

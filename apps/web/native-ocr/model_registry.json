@@ -1,0 +1,20 @@
+{
+  "protocolVersion": 2,
+  "enabledModels": [
+    {
+      "id": "ppocr-v5-server",
+      "engine": "PP-OCRv5-server",
+      "license": "Apache-2.0",
+      "routes": ["general", "line", "mixed"],
+      "recognizerSha256": "e09385400eaaaef34ceff54aeb7c4f0f1fe014c27fa8b9905d4709b65746562a",
+      "detectorSha256": "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae"
+    }
+  ],
+  "disabledCandidates": [
+    {
+      "id": "yas-svtr-genshin",
+      "sourceCommit": "757689f062d0f3c2dc0bd48e16544f5f6e8e78d1",
+      "reason": "Not redistributed or enabled: pending-state character coverage, model-specific confidence calibration and weight distribution license have not been established. No upstream code or weights copied."
+    }
+  ]
+}

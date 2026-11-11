@@ -1,0 +1,13 @@
+{
+  "ttl": 60,
+  "avatarInfoList": [{ "avatarId": 10000002, "equipList": [
+    { "reliquary": { "level": 1 }, "flat": { "itemType": "ITEM_RELIQUARY", "rankLevel": 5, "equipType": "EQUIP_BRACER", "setNameTextMapHash": "25884284", "nameTextMapHash": "1056849956", "reliquaryMainstat": { "mainPropId": "FIGHT_PROP_HP", "propValue": 717 }, "reliquarySubstats": [{ "appendPropId": "FIGHT_PROP_CRITICAL", "propValue": 3.9 }, { "appendPropId": "FIGHT_PROP_DEFENSE", "propValue": 16 }, { "appendPropId": "FIGHT_PROP_ELEMENT_MASTERY", "propValue": 23 }] } },
+    { "reliquary": { "level": 21 }, "flat": { "itemType": "ITEM_RELIQUARY", "rankLevel": 5, "equipType": "EQUIP_NECKLACE", "setNameTextMapHash": "25884284", "nameTextMapHash": "654590988", "reliquaryMainstat": { "mainPropId": "FIGHT_PROP_ATTACK", "propValue": 311 }, "reliquarySubstats": [{ "appendPropId": "FIGHT_PROP_CRITICAL", "propValue": 3.9 }] } },
+    { "reliquary": { "level": 21 }, "flat": { "itemType": "ITEM_RELIQUARY", "rankLevel": 5, "equipType": "EQUIP_SHOES", "setNameTextMapHash": "25884284", "nameTextMapHash": "1190117452", "reliquaryMainstat": { "mainPropId": "FIGHT_PROP_ATTACK_PERCENT", "propValue": 46.6 }, "reliquarySubstats": [{ "appendPropId": "FIGHT_PROP_CRITICAL", "propValue": 3.9 }] } },
+    { "reliquary": { "level": 21 }, "flat": { "itemType": "ITEM_RELIQUARY", "rankLevel": 5, "equipType": "EQUIP_RING", "setNameTextMapHash": "25884284", "nameTextMapHash": "220327180", "reliquaryMainstat": { "mainPropId": "FIGHT_PROP_FIRE_ADD_HURT", "propValue": 46.6 }, "reliquarySubstats": [{ "appendPropId": "FIGHT_PROP_CRITICAL", "propValue": 3.9 }] } },
+    { "reliquary": { "level": 21 }, "flat": { "itemType": "ITEM_RELIQUARY", "rankLevel": 5, "equipType": "EQUIP_DRESS", "setNameTextMapHash": "25884284", "nameTextMapHash": "128392692", "reliquaryMainstat": { "mainPropId": "FIGHT_PROP_CRITICAL_HURT", "propValue": 62.2 }, "reliquarySubstats": [{ "appendPropId": "FIGHT_PROP_CHARGE_EFFICIENCY", "propValue": 22.7 }, { "appendPropId": "FIGHT_PROP_CRITICAL", "propValue": 3.9 }, { "appendPropId": "FIGHT_PROP_DEFENSE", "propValue": 16 }, { "appendPropId": "FIGHT_PROP_ELEMENT_MASTERY", "propValue": 40 }] } },
+    { "flat": { "itemType": "ITEM_WEAPON", "rankLevel": 5 } },
+    { "flat": { "itemType": "ITEM_RELIQUARY", "rankLevel": 4 } },
+    { "reliquary": { "level": 21 }, "flat": { "itemType": "ITEM_RELIQUARY", "rankLevel": 5, "equipType": "EQUIP_DRESS", "setNameTextMapHash": "unknown", "nameTextMapHash": "unknown" } }
+  ] }]
+}

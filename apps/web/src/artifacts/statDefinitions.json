@@ -1,0 +1,21 @@
+{
+  "hpFlat": { "label": "生命值", "prop": "FIGHT_PROP_HP", "percent": false, "sub": true, "slots": ["生之花"] },
+  "hpPercent": { "label": "生命值", "prop": "FIGHT_PROP_HP_PERCENT", "percent": true, "sub": true, "slots": ["时之沙", "空之杯", "理之冠"] },
+  "atkFlat": { "label": "攻击力", "prop": "FIGHT_PROP_ATTACK", "percent": false, "sub": true, "slots": ["死之羽"] },
+  "atkPercent": { "label": "攻击力", "prop": "FIGHT_PROP_ATTACK_PERCENT", "percent": true, "sub": true, "slots": ["时之沙", "空之杯", "理之冠"] },
+  "defFlat": { "label": "防御力", "prop": "FIGHT_PROP_DEFENSE", "percent": false, "sub": true, "slots": [] },
+  "defPercent": { "label": "防御力", "prop": "FIGHT_PROP_DEFENSE_PERCENT", "percent": true, "sub": true, "slots": ["时之沙", "空之杯", "理之冠"] },
+  "elementalMastery": { "label": "元素精通", "prop": "FIGHT_PROP_ELEMENT_MASTERY", "percent": false, "sub": true, "slots": ["时之沙", "空之杯", "理之冠"] },
+  "energyRecharge": { "label": "元素充能效率", "prop": "FIGHT_PROP_CHARGE_EFFICIENCY", "percent": true, "sub": true, "slots": ["时之沙"] },
+  "critRate": { "label": "暴击率", "prop": "FIGHT_PROP_CRITICAL", "percent": true, "sub": true, "slots": ["理之冠"] },
+  "critDamage": { "label": "暴击伤害", "prop": "FIGHT_PROP_CRITICAL_HURT", "percent": true, "sub": true, "slots": ["理之冠"] },
+  "healingBonus": { "label": "治疗加成", "prop": "FIGHT_PROP_HEAL_ADD", "percent": true, "sub": false, "slots": ["理之冠"] },
+  "physicalDmgBonus": { "label": "物理伤害加成", "prop": "FIGHT_PROP_PHYSICAL_ADD_HURT", "percent": true, "sub": false, "slots": ["空之杯"] },
+  "pyroDmgBonus": { "label": "火元素伤害加成", "prop": "FIGHT_PROP_FIRE_ADD_HURT", "percent": true, "sub": false, "slots": ["空之杯"] },
+  "hydroDmgBonus": { "label": "水元素伤害加成", "prop": "FIGHT_PROP_WATER_ADD_HURT", "percent": true, "sub": false, "slots": ["空之杯"] },
+  "electroDmgBonus": { "label": "雷元素伤害加成", "prop": "FIGHT_PROP_ELEC_ADD_HURT", "percent": true, "sub": false, "slots": ["空之杯"] },
+  "cryoDmgBonus": { "label": "冰元素伤害加成", "prop": "FIGHT_PROP_ICE_ADD_HURT", "percent": true, "sub": false, "slots": ["空之杯"] },
+  "anemoDmgBonus": { "label": "风元素伤害加成", "prop": "FIGHT_PROP_WIND_ADD_HURT", "percent": true, "sub": false, "slots": ["空之杯"] },
+  "geoDmgBonus": { "label": "岩元素伤害加成", "prop": "FIGHT_PROP_ROCK_ADD_HURT", "percent": true, "sub": false, "slots": ["空之杯"] },
+  "dendroDmgBonus": { "label": "草元素伤害加成", "prop": "FIGHT_PROP_GRASS_ADD_HURT", "percent": true, "sub": false, "slots": ["空之杯"] }
+}

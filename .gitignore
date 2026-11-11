@@ -1,0 +1,19 @@
+# Private collection map and third-party original binaries are local-only.
+/scripts/private-artwork-sources.local.json
+/apps/web/src/assets/artifacts/originals/
+/.cache/ocr/
+/apps/web/public/ocr/
+/tests/private/ocr/
+/tests/private/backups/
+/bc截图/
+/.superpowers/
+/apps/web/dist-local/
+/apps/web/release-local/
+/apps/web/output/
+/apps/web/native-ocr/runtime/
+/apps/web/native-ocr/__pycache__/
+/apps/web/src/assets/characters/originals/
+/apps/web/release-fullpage-candidate*/
+/_audit_AnimeGameData/
+/output/
+__pycache__/

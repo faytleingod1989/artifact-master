@@ -1,0 +1,110 @@
+.mobile-recognize,
+.mobile-nav {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .mobile-recognize {
+    position: relative;
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 14px;
+    min-height: 142px;
+    margin: 2px 0 12px;
+    padding: 22px 18px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background:
+      linear-gradient(90deg, rgba(4, 14, 29, .45), rgba(6, 18, 34, .1)),
+      var(--archive-background) center 40% / cover;
+    box-shadow: inset 0 0 0 1px rgba(248, 218, 153, .07), 0 14px 30px #0007;
+  }
+
+  .mobile-recognize::before {
+    position: absolute;
+    inset: 0;
+    content: "";
+    background: radial-gradient(circle at 72% 48%, rgba(237, 196, 106, .3), transparent 22%);
+    pointer-events: none;
+  }
+
+  .mobile-recognize > div,
+  .mobile-recognize button {
+    position: relative;
+    z-index: 1;
+  }
+
+  .mobile-recognize span,
+  .mobile-recognize strong {
+    display: block;
+  }
+
+  .mobile-recognize span {
+    margin-bottom: 5px;
+    color: #e7c672;
+    font-size: 10px;
+    letter-spacing: .06em;
+  }
+
+  .mobile-recognize strong {
+    max-width: 175px;
+    color: #fff0c8;
+    font-family: STSong, "Songti SC", serif;
+    font-size: 19px;
+    line-height: 1.25;
+  }
+
+  .mobile-recognize .primary-button {
+    min-width: 112px;
+  }
+
+  .mobile-nav {
+    position: fixed;
+    z-index: 40;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    min-height: 64px;
+    padding: 6px 8px max(7px, env(safe-area-inset-bottom));
+    border-top: 1px solid rgba(213, 175, 100, .5);
+    background: rgba(4, 13, 25, .96);
+    box-shadow: 0 -8px 26px #000b;
+    backdrop-filter: blur(15px);
+  }
+
+  .mobile-nav button {
+    display: grid;
+    place-items: center;
+    gap: 3px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #9aabc0;
+    font-size: 10px;
+  }
+
+  .mobile-nav button.active {
+    color: #f4d990;
+    background: linear-gradient(180deg, rgba(160, 119, 56, .34), rgba(31, 42, 60, .36));
+  }
+}
+
+@media (max-width: 520px) {
+  .mobile-recognize {
+    min-height: 128px;
+    padding: 18px 14px;
+  }
+
+  .mobile-recognize strong {
+    font-size: 17px;
+  }
+
+  .mobile-recognize .primary-button {
+    min-width: 104px;
+    padding: 0 10px;
+  }
+}

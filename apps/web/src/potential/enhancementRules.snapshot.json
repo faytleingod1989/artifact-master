@@ -1,0 +1,78 @@
+{
+  "version": "2026-10-18-v1",
+  "sourceCommit": "26df1dfbdf05a82bbb1d97506859f3e1c40718d8",
+  "sourceHashes": {
+    "ExcelBinOutput/ReliquaryAffixExcelConfigData.json": "b8a6f780ed01667694d4be0c43ae09a0aa8f6d06e3b686d4c3a211a1d8a25b52",
+    "ExcelBinOutput/ReliquaryExcelConfigData.json": "85ebb1709966a5f49ce91f87b2794e918314dc0d146994034197f66e1762d2a9"
+  },
+  "unitScale": 10000,
+  "events": [
+    4,
+    8,
+    12,
+    16,
+    20
+  ],
+  "tiers": {
+    "hpFlat": [
+      2091300,
+      2390000,
+      2688800,
+      2987500
+    ],
+    "hpPercent": [
+      40800,
+      46600,
+      52500,
+      58300
+    ],
+    "atkFlat": [
+      136200,
+      155600,
+      175100,
+      194500
+    ],
+    "atkPercent": [
+      40800,
+      46600,
+      52500,
+      58300
+    ],
+    "defFlat": [
+      162000,
+      185200,
+      208300,
+      231500
+    ],
+    "defPercent": [
+      51000,
+      58300,
+      65600,
+      72900
+    ],
+    "elementalMastery": [
+      163200,
+      186500,
+      209800,
+      233100
+    ],
+    "energyRecharge": [
+      45300,
+      51800,
+      58300,
+      64800
+    ],
+    "critRate": [
+      27200,
+      31100,
+      35000,
+      38900
+    ],
+    "critDamage": [
+      54400,
+      62200,
+      69900,
+      77700
+    ]
+  }
+}

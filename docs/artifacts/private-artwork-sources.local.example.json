@@ -1,0 +1,10 @@
+{
+  "snapshot": "2026-08-15",
+  "entries": {
+    "<setKey>/<slot>": {
+      "url": "https://raw.githubusercontent.com/<owner>/<repo>/<full-commit>/<path>",
+      "mirrorSetKey": "<mirror-set-key>",
+      "mirrorSlotKey": "fwol|pmod|sdoe|gboe|ccol"
+    }
+  }
+}
