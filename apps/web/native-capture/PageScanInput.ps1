@@ -262,16 +262,19 @@ public class ArtifactPageScanner : IDisposable {
     if(rows.Count==0||rows.Max(r=>r.Count)<2) return reject("NO_CARD_ROWS rows="+rows.Count);
     var longest=rows.OrderByDescending(r=>r.Count).First();
     var completeRows=rows.Where(r=>r.Count==longest.Count).OrderBy(r=>r[0].Top).ToList();
-    if(completeRows.Count>=2) {
+    if(completeRows.Count>=2||(completeRows.Count==1&&longest.Count>=6)) {
       // Selected-card borders expand symmetrically; row centers, not raw top
       // edges, establish spacing. Use the latest full row's normal rectangles.
-      var latestRow=completeRows[completeRows.Count-1];
+      var firstRow=completeRows[0];
       var normalRow=completeRows.OrderBy(r=>r[0].Height).ThenByDescending(r=>r[0].Top).First();
-      int spacing=(completeRows[1][0].Top+completeRows[1][0].Height/2)-(completeRows[0][0].Top+completeRows[0][0].Height/2),h=normalRow[0].Height;
-      int latestTop=latestRow[0].Top+(latestRow[0].Height-h)/2;
+      double colPitch=(normalRow[normalRow.Count-1].Left-normalRow[0].Left)/(double)(normalRow.Count-1);
+      int rawSpacing=completeRows.Count>=2?(completeRows[1][0].Top+completeRows[1][0].Height/2)-(completeRows[0][0].Top+completeRows[0][0].Height/2):0,h=normalRow[0].Height;
+      int spacing=rawSpacing>=h*.8&&rawSpacing<=h*1.8?rawSpacing:(int)Math.Round(colPitch*1.195);
+      int firstTop=firstRow[0].Top+(firstRow[0].Height-h)/2;
       if(spacing>=h*.8&&spacing<=h*1.8) {
-        for(int top=latestTop+spacing;top+h*1.19<=height*.90;top+=spacing) {
-          if(rows.Any(line=>Math.Abs(line[0].Top-top)<=step*3))continue;
+        for(int top=firstTop+spacing;top+h*1.19<=height*.90;top+=spacing) {
+          var existing=rows.FirstOrDefault(line=>line.Count==longest.Count&&Math.Abs(line[0].Top-top)<=step*3);
+          if(existing!=null){top=existing[0].Top+(existing[0].Height-h)/2;continue;}
           var projected=new List<Rectangle>();
           foreach(var template in normalRow) {
             var candidate=new Rectangle(template.Left,top,template.Width,h);
@@ -290,6 +293,7 @@ public class ArtifactPageScanner : IDisposable {
             if(later>=2)return reject("PROJECTED_ROW_GAP top="+top+" verified="+projected.Count+" later="+later);
           }
           if(projected.Count==0)break;
+          rows.RemoveAll(line=>line.Count<projected.Count&&Math.Abs(line[0].Top-top)<=h*.35);
           rows.Add(projected);if(projected.Count<longest.Count)break;
         }
       }

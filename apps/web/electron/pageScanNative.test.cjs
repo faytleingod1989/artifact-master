@@ -165,6 +165,11 @@ test('real Oct30 inventory includes all four complete rows, not only rows above 
   const result=analyze(appearanceBefore)
   assert.equal(result.validLayout,true);assert.equal(result.cells.length,32);assert.equal(result.cells.at(-1).id,'r3c7')
 })
+const singleRowWarmScene=path.resolve(__dirname,'../../../bc截图/ScreenShot_2026-11-12_235249_anchor.jpg')
+test('inventory with warm scene background starting below row 0 still recovers all four complete rows (32 cells)',{skip:!fs.existsSync(singleRowWarmScene)},()=>{
+  const result=analyze(singleRowWarmScene)
+  assert.equal(result.validLayout,true);assert.equal(result.cells.length,32);assert.equal(result.cells[0].id,'r0c0');assert.equal(result.cells.at(-1).id,'r3c7')
+})
 test('actual native JSON transport restores bounded appearance evidence larger than the old line cap and rejects excess',{skip:!fs.existsSync(liveInventory)},()=>{
   const run=input=>{
     const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',path.join(__dirname,'fixtures/pageScanAnchorSnapshotProbe.ps1'),'-Source',script,'-Image',liveInventory,'-Serve'],{input,encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:2000000})
