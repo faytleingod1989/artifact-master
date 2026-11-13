@@ -3,6 +3,8 @@ import type { CaptureDiagnostic } from './captureController'
 import type { CaptureRoi } from './captureRegion'
 export const MANUAL_BATCH_LIMIT = 20
 export const PAGE_BATCH_LIMIT = 60
+export const STREAMING_INFLIGHT_LIMIT = 80
+export const STREAMING_RESUME_WATERMARK = 40
 export type CaptureTrigger = 'manual' | 'automatic' | 'page'
 export type CaptureJobState = 'capturing' | 'queued' | 'recognizing' | 'failed' | 'pending' | 'cancelled'
 export type CaptureJobSnapshot = Readonly<{
@@ -15,6 +17,6 @@ export type CaptureJobSnapshot = Readonly<{
 }>
 export type CaptureQueueSnapshot = Readonly<{
   batchId: string; accepting: boolean; capturing: boolean; ocrPaused: boolean
-  heldSourceBytes: number; jobs: readonly CaptureJobSnapshot[]
+  heldSourceBytes: number; autoCommittedCount?: number; jobs: readonly CaptureJobSnapshot[]
 }>
 export type CaptureRequestOutcome = 'started' | 'inactive' | 'capture-busy' | 'capacity' | 'engine-paused'

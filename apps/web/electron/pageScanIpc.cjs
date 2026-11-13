@@ -20,17 +20,18 @@ function registerPageScanIpc(ipcMain, getWindow, isKnownWindow, createClient) {
   ipcMain.handle(channels[1], async (event, id, value) => {
     const session = active
     if (!authorized(event) || !session || id !== session.id || session.sender !== event.sender || session.frame !== event.senderFrame) throw Error('页面扫描会话已失效。')
-    if (!value || typeof value !== 'object' || !['observe','select','freeze','resume','pause','prepare','anchor','reset-page'].includes(value.action)) throw Error('不支持的扫描操作。')
+    if (!value || typeof value !== 'object' || !['observe','select','freeze','resume','pause','prepare','anchor','reset-page','scroll-down'].includes(value.action)) throw Error('不支持的扫描操作。')
     const targeted = value.action === 'select' || value.action === 'freeze'
-    if (Object.keys(value).some(key => key !== 'action' && !(targeted && key === 'cellId')) || targeted && (typeof value.cellId !== 'string' || !/^r\d{1,2}c\d{1,2}$/.test(value.cellId))) throw Error('扫描只接受已识别格位，不接受坐标或命令。')
-    if ((targeted || value.action === 'prepare' || value.action === 'anchor') && session.paused) throw Error('自动输入已暂停。')
+    const isScroll = value.action === 'scroll-down'
+    if (Object.keys(value).some(key => key !== 'action' && !(targeted && key === 'cellId') && !(isScroll && key === 'ticks')) || targeted && (typeof value.cellId !== 'string' || !/^r\d{1,2}c\d{1,2}$/.test(value.cellId)) || isScroll && value.ticks !== undefined && (!Number.isInteger(value.ticks) || value.ticks < 1 || value.ticks > 8)) throw Error('扫描只接受已识别格位或受控翻页指令，不接受坐标或命令。')
+    if ((targeted || isScroll || value.action === 'prepare' || value.action === 'anchor') && session.paused) throw Error('自动输入已暂停。')
     if(value.action==='reset-page'&&!session.paused)throw Error('请先停止当前页输入再重建格位。')
     if (session.busy && value.action !== 'pause') throw Error('上一扫描操作仍在结束。')
     if (value.action === 'pause') { session.paused = true; session.inputEpoch++ }
     const inputEpoch = session.inputEpoch
     const ownsBusy = !session.busy; if (ownsBusy) session.busy = true
     try {
-      const result = await session.client.command({ action: value.action, ...(targeted ? { cellId: value.cellId } : {}) })
+      const result = await session.client.command({ action: value.action, ...(targeted ? { cellId: value.cellId } : {}), ...(isScroll && value.ticks !== undefined ? { ticks: value.ticks } : {}) })
       if (!authorized(event) || active !== session) throw Error('页面扫描结果已过期。')
       if (value.action === 'resume' && session.inputEpoch === inputEpoch) session.paused = false
       return result

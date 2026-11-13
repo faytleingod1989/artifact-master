@@ -252,3 +252,111 @@ test('alternating SAME and TRANSIENT frames during startup reset stability count
   expect(x.frames).toEqual([])
   expect(x.state().state).toBe('paused')
 })
+test('neighbor card glow changing pageSignature while scrollAnchor holds does not interrupt page scan',async()=>{
+  const x=harness(3),observe=x.driver.observe;let count=0
+  x.driver.observe=async()=>{
+    const value=await observe()
+    count++
+    return {...value,scrollAnchor:'3:1x3:10,20,300,120:a1b2c3d4',pageSignature:`drift-${count}`,pageStatus:'TRANSIENT',mismatches:[{id:'r0c1',branch:'upper-icon',referenceEmphasized:false,currentEmphasized:true}]}
+  }
+  await x.controller.start()
+  expect(x.frames).toEqual(['r0c0','r0c1','r0c2'])
+  expect(x.state().state).toBe('page-complete')
+})
+function multiPageController(opts: { autoScroll?: boolean; stopRequested?: () => string | undefined; onEnqueue?: (cellId: string) => void; pages: Array<{ sig: string; rows: string[]; hasFourStar?: boolean }> }) {
+  let pageIndex = 0, seq = 0, selected: string | undefined = 'r0c0', stops = 0
+  const states: string[] = [], clicks: string[] = [], frames: string[] = [], scrolls: number[] = []
+  let current = opts.pages[0]
+  const mkCells = (rowCount: number) => Array.from({ length: rowCount * 2 }, (_, idx) => {
+    const row = Math.floor(idx / 2), col = idx % 2, id = `r${row}c${col}`
+    return { id, row, col, rarity: 5 as const, selected: id === selected }
+  })
+  const controller = createPageScanController({
+    sourceId: 'window:123:0',
+    autoScroll: () => opts.autoScroll ?? true,
+    stopRequested: opts.stopRequested,
+    sleep: async () => {},
+    random: () => 0.5,
+    canCapture: () => true,
+    enqueue: (_frame, _pageId, cellId) => { opts.onEnqueue?.(cellId); frames.push(cellId); return { outcome: 'started', jobId: `job-${frames.length}` } },
+    onState: s => { states.push(s.state) },
+    driver: {
+      observe: async () => ({
+        sourceId: 'window:123:0', width: 1280, height: 720, geometryKey: '0,0,1280,720', frameSequence: ++seq,
+        foreground: true, validLayout: true, emergencyStop: false,
+        hasFourStar: current.hasFourStar ?? false,
+        pageSignature: current.sig, scrollAnchor: current.sig, detailSignature: `detail-${current.sig}-${selected}`,
+        rowSignatures: current.rows, selectedCellId: selected, cells: mkCells(current.rows.length), pageStatus: 'SAME',
+      }),
+      select: async id => { clicks.push(id); selected = id },
+      scrollDown: async (ticks = 5) => {
+        scrolls.push(ticks)
+        if (pageIndex + 1 < opts.pages.length) { pageIndex++; current = opts.pages[pageIndex]; selected = 'r0c0' }
+      },
+      freeze: async cellId => ({ sourceId: 'window:123:0', capturedAt: ++seq, width: 1280, height: 720, image: new Blob([cellId]), ocrImage: new Blob([cellId]), roi: { x: 0, y: 0, width: 1280, height: 720 } }),
+      resume: async () => {},
+      pause: async () => { stops++ },
+      close: async () => {},
+      prepare: async () => {},
+      anchor: async () => {},
+      resetPage: async () => {},
+    },
+  })
+  return { controller, clicks, frames, scrolls, states, getStops: () => stops }
+}
+test('autoScroll advances pages, skips overlapping rows via rowSignatures, and completes cleanly at bottom', async () => {
+  const m = multiPageController({
+    pages: [
+      { sig: 'p1', rows: ['sigA', 'sigB'] },
+      { sig: 'p2', rows: ['sigB', 'sigC'] },
+    ],
+  })
+  await m.controller.start()
+  expect(m.scrolls).toEqual([5, 5])
+  expect(m.clicks).toEqual(['r0c0', 'r0c1', 'r1c0', 'r1c1', 'r1c0', 'r1c1'])
+  expect(m.frames).toEqual(['r0c0', 'r0c1', 'r1c0', 'r1c1', 'r1c0', 'r1c1'])
+  expect(m.states).toContain('scrolling')
+  expect(m.states.at(-1)).toBe('completed')
+})
+test('autoScroll stops cleanly upon reaching a four-star boundary before scrolling further', async () => {
+  const m = multiPageController({
+    pages: [
+      { sig: 'p1', rows: ['sigA'] },
+      { sig: 'p2', rows: ['sigB'], hasFourStar: true },
+      { sig: 'p3', rows: ['sigC'] },
+    ],
+  })
+  await m.controller.start()
+  expect(m.scrolls).toEqual([5])
+  expect(m.frames).toEqual(['r0c0', 'r0c1', 'r0c0', 'r0c1'])
+  expect(m.states.at(-1)).toBe('completed')
+})
+test('autoScroll stops cleanly when stopRequested signals +0 level artifact', async () => {
+  let stopMsg: string | undefined
+  const m = multiPageController({
+    stopRequested: () => stopMsg,
+    onEnqueue: cellId => { if (cellId === 'r0c1') stopMsg = '遇到 +0 圣遗物，已停止' },
+    pages: [{ sig: 'p1', rows: ['sigA', 'sigB'] }, { sig: 'p2', rows: ['sigC'] }],
+  })
+  await m.controller.start()
+  expect(m.clicks).toEqual(['r0c0', 'r0c1'])
+  expect(m.scrolls).toEqual([])
+  expect(m.states.at(-1)).toBe('completed')
+})
+test('right-click emergency stop during autoScroll transitions to emergency_stopped', async () => {
+  const x = harness(2)
+  let snapshot: ReturnType<typeof x.state> | undefined
+  const controller = createPageScanController({
+    sourceId: 'window:123:0',
+    autoScroll: () => true,
+    canCapture: () => true,
+    enqueue: () => ({ outcome: 'started', jobId: 'j1' }),
+    onState: s => { snapshot = s },
+    driver: {
+      ...x.driver,
+      observe: async () => ({ ...await x.driver.observe(), emergencyStop: true }),
+    },
+  })
+  await controller.start()
+  expect(snapshot?.state).toBe('emergency_stopped')
+})

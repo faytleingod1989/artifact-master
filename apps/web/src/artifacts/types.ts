@@ -7,5 +7,5 @@ export type ArtifactRecord = {
   id: number; name: string; set: string; setKey?: ArtifactSetKey; slot: ArtifactSlot
   level: number; score: number; main: string; subs: string[]; locked: boolean; hue: string
   pendingSubs?: string[]
-  source?: { kind: 'manual' | 'realtime' | 'screenshot' | 'uid'; characterId?: number; fetchedAt?: number }
+  source?: { kind: 'manual' | 'realtime' | 'screenshot' | 'uid'; characterId?: number; fetchedAt?: number; batchId?: string }
 }

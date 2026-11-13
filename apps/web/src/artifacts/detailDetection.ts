@@ -1,4 +1,5 @@
 import type { CaptureRoi } from '../capture/captureRegion'
+import { findArtifactFieldLayoutPixels, type ArtifactFieldLayout } from './artifactFieldLayout'
 import { OcrImageRejectedError } from './ocrImageRejection'
 
 type Band = { top: number; bottom: number; left: number; right: number }
@@ -38,39 +39,62 @@ export function findDetailRegionPixels(pixels: Uint8ClampedArray, width: number,
   return null
 }
 
-export async function detectArtifactDetail(frame: Blob): Promise<{ image: Blob; roi: CaptureRoi; width: number; height: number }> {
+function tryHintRegion(bitmap: ImageBitmap, hintRoi: CaptureRoi): CaptureRoi | null {
+  if (bitmap.width < 320 || bitmap.height < 240 || bitmap.width / bitmap.height < 1.3) return null
+  if (![hintRoi.x, hintRoi.y, hintRoi.width, hintRoi.height].every(Number.isSafeInteger) || hintRoi.width < 1 || hintRoi.height < 1) return null
+  const x = Math.max(0, hintRoi.x - 48), y = Math.max(0, hintRoi.y - 48)
+  const right = Math.min(bitmap.width, hintRoi.x + hintRoi.width + 48)
+  const bottom = Math.min(bitmap.height, hintRoi.y + hintRoi.height + 48)
+  const tile = { x, y, width: right - x, height: bottom - y }
+  if (tile.width < 1 || tile.height < 1) return null
+  const tileCanvas = document.createElement('canvas'); tileCanvas.width = tile.width; tileCanvas.height = tile.height
+  const tileCtx = tileCanvas.getContext('2d', { willReadFrequently: true })
+  if (!tileCtx) return null
+  tileCtx.drawImage(bitmap, tile.x, tile.y, tile.width, tile.height, 0, 0, tile.width, tile.height)
+  const found = findDetailRegionPixels(tileCtx.getImageData(0, 0, tile.width, tile.height).data, bitmap.width, bitmap.height, tile)
+  tileCanvas.width = tileCanvas.height = 1
+  return found
+}
+
+export async function detectArtifactDetail(frame: Blob, options?: { hintRoi?: CaptureRoi; computeLayout?: boolean }): Promise<{ image: Blob; roi: CaptureRoi; width: number; height: number; layout?: ArtifactFieldLayout | null }> {
   const bitmap = await createImageBitmap(frame)
   try {
-    const scale = Math.min(1, 1920 / bitmap.width, 1080 / bitmap.height)
-    const canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale))
-    const context = canvas.getContext('2d', { willReadFrequently: true })
-    if (!context) throw new Error('无法分析采集画面。')
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-    const located = findDetailRegionPixels(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height)
-    if (!located) throw new OcrImageRejectedError('未找到完整的圣遗物详情。请打开详情页并保持游戏窗口可见，再重新采集；不会把整张画面当作详情识别。')
-    const sx = bitmap.width / canvas.width, sy = bitmap.height / canvas.height
-    const x = Math.max(0, Math.floor(located.x * sx) - (scale < 1 ? Math.ceil(sx * 2) : 0)), y = Math.max(0, Math.floor(located.y * sy) - (scale < 1 ? Math.ceil(sy * 2) : 0))
-    const right = scale < 1 ? bitmap.width - 4 : located.x + located.width
-    const bottom = Math.min(bitmap.height, Math.ceil((located.y + located.height) * sy) + (scale < 1 ? Math.ceil(sy * 2) : 0))
-    let roi = { x, y, width: right - x, height: bottom - y }
-    if (scale < 1) {
-      const native = document.createElement('canvas'); native.width = bitmap.width; native.height = bitmap.height
-      const refine = native.getContext('2d', { willReadFrequently: true })
-      if (!refine) throw Error('无法精确分析详情区域。')
-      refine.drawImage(bitmap, 0, 0)
-      const tileX = Math.max(0, x - 64), tileY = Math.max(0, y - 32)
-      const tile = { x: tileX, y: tileY, width: bitmap.width - tileX, height: Math.min(bitmap.height - tileY, roi.height + 128) }
-      const exact = findDetailRegionPixels(refine.getImageData(tile.x, tile.y, tile.width, tile.height).data, bitmap.width, bitmap.height, tile)
-      const confirmed = exact ?? findDetailRegionPixels(refine.getImageData(0, 0, bitmap.width, bitmap.height).data, bitmap.width, bitmap.height)
-      if (!confirmed) throw new OcrImageRejectedError('原图未能确认完整详情区域，请重新采集。')
-      roi = confirmed
-      native.width = native.height = 1
+    let roi = options?.hintRoi ? tryHintRegion(bitmap, options.hintRoi) : null
+    if (!roi) {
+      const scale = Math.min(1, 1920 / bitmap.width, 1080 / bitmap.height)
+      const canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      if (!context) throw new Error('无法分析采集画面。')
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      const located = findDetailRegionPixels(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height)
+      if (!located) throw new OcrImageRejectedError('未找到完整的圣遗物详情。请打开详情页并保持游戏窗口可见，再重新采集；不会把整张画面当作详情识别。')
+      const sx = bitmap.width / canvas.width, sy = bitmap.height / canvas.height
+      const x = Math.max(0, Math.floor(located.x * sx) - (scale < 1 ? Math.ceil(sx * 2) : 0)), y = Math.max(0, Math.floor(located.y * sy) - (scale < 1 ? Math.ceil(sy * 2) : 0))
+      const right = scale < 1 ? bitmap.width - 4 : located.x + located.width
+      const bottom = Math.min(bitmap.height, Math.ceil((located.y + located.height) * sy) + (scale < 1 ? Math.ceil(sy * 2) : 0))
+      roi = { x, y, width: right - x, height: bottom - y }
+      if (scale < 1) {
+        const native = document.createElement('canvas'); native.width = bitmap.width; native.height = bitmap.height
+        const refine = native.getContext('2d', { willReadFrequently: true })
+        if (!refine) throw Error('无法精确分析详情区域。')
+        refine.drawImage(bitmap, 0, 0)
+        const tileX = Math.max(0, x - 64), tileY = Math.max(0, y - 32)
+        const tile = { x: tileX, y: tileY, width: bitmap.width - tileX, height: Math.min(bitmap.height - tileY, roi.height + 128) }
+        const exact = findDetailRegionPixels(refine.getImageData(tile.x, tile.y, tile.width, tile.height).data, bitmap.width, bitmap.height, tile)
+        const confirmed = exact ?? findDetailRegionPixels(refine.getImageData(0, 0, bitmap.width, bitmap.height).data, bitmap.width, bitmap.height)
+        if (!confirmed) throw new OcrImageRejectedError('原图未能确认完整详情区域，请重新采集。')
+        roi = confirmed
+        native.width = native.height = 1
+      }
     }
     const crop = document.createElement('canvas'); crop.width = roi.width; crop.height = roi.height
-    const output = crop.getContext('2d')
+    const output = options?.computeLayout ? crop.getContext('2d', { willReadFrequently: true }) : crop.getContext('2d')
     if (!output) throw Error('无法创建详情图像。')
     output.drawImage(bitmap, roi.x, roi.y, roi.width, roi.height, 0, 0, roi.width, roi.height)
+    const layout = options?.computeLayout && typeof output.getImageData === 'function'
+      ? findArtifactFieldLayoutPixels(output.getImageData(0, 0, roi.width, roi.height).data, roi.width, roi.height)
+      : undefined
     const image = await new Promise<Blob>((resolve, reject) => crop.toBlob(blob => blob ? resolve(blob) : reject(Error('无法保存详情图像。')), 'image/png'))
-    return { image, roi, width: bitmap.width, height: bitmap.height }
+    return { image, roi, width: bitmap.width, height: bitmap.height, ...(layout !== undefined ? { layout } : {}) }
   } finally { bitmap.close() }
 }

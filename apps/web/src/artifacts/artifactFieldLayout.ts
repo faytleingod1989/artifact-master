@@ -18,7 +18,7 @@ export function findArtifactFieldLayoutPixels(pixels: Uint8ClampedArray, width: 
   if (!set) return null
   const head = findTextBands(header, width, height, .28).filter(row => row.y + row.height < set.y)
   const rows = body === null ? head : findTextBands(text, width, height, .28).filter(row => row.y + row.height < set.y)
-  if (body === null ? rows.length < 7 || rows.length > 8 : head.length !== 4 || rows.length < 4 || rows.length > 5) return null
+  if (body === null ? rows.length < 7 || rows.length > 8 : head.length < 4 || head.length > 5 || rows.length < 4 || rows.length > 6) return null
   const fields: ArtifactFieldBox[] = []
   const add = (field: ArtifactField, row: { y: number; height: number }, x = 0, span = width, pad = 0) => {
     const y = Math.max(0, row.y - pad)
@@ -35,7 +35,7 @@ export function findArtifactFieldLayoutPixels(pixels: Uint8ClampedArray, width: 
     add('mainName', head[2], 0, Math.round(width * .45))
     add('mainValue', head[3], 0, Math.round(width * .65))
     add('level', rows[0], 0, Math.round(width * .35))
-    rows.slice(1).forEach((row, index) => add(`sub${index}` as ArtifactField, row))
+    rows.slice(1, 5).forEach((row, index) => add(`sub${index}` as ArtifactField, row))
   }
   add('set', set)
   return { layoutId: body === null ? 'equipment-panel' : 'inventory-card', width, height, fields }

@@ -8,7 +8,7 @@ export type DraftIssue = { field: string; code: string; message: string; severit
 export type ArtifactDraft = {
   draftId: string; setKey?: ArtifactSetKey; slot?: ArtifactSlot; rarity: 5; level?: number
   main?: StatValue; subs: StatValue[]; pendingSubs?: StatValue[]; name?: string; source: DraftSource
-  sourceCharacterId?: number; fetchedAt?: number; issues: DraftIssue[]
+  sourceCharacterId?: number; fetchedAt?: number; batchId?: string; issues: DraftIssue[]
   observedGameLocked?: boolean
 }
 export type ImportDecision = { draft: ArtifactDraft; action: 'skip' | 'add' | 'update'; targetId?: number }
@@ -59,7 +59,7 @@ export function draftToRecord(draft: ArtifactDraft, id: number): ArtifactRecord 
   return { id, name: getPieceName(set.key, draft.slot!) ?? `${set.name}·${draft.slot}`, set: set.name, setKey: set.key,
     slot: draft.slot!, level: draft.level!, main: formatStat(draft.main!), subs: draft.subs.map(sub => formatStat(sub).replace(' ', ' +')),
     ...(draft.pendingSubs?.length ? { pendingSubs: draft.pendingSubs.map(sub => formatStat(sub).replace(' ', ' +')) } : {}),
-    score: 0, locked: draft.observedGameLocked === true, hue: 'blue', source: { kind: draft.source, characterId: draft.sourceCharacterId, fetchedAt: draft.fetchedAt } }
+    score: 0, locked: draft.observedGameLocked === true, hue: 'blue', source: { kind: draft.source, characterId: draft.sourceCharacterId, fetchedAt: draft.fetchedAt, ...(draft.batchId ? { batchId: draft.batchId } : {}) } }
 }
 export function recordToDraft(record: ArtifactRecord, source: DraftSource, draftId: string = crypto.randomUUID()): ArtifactDraft {
   const issues: DraftIssue[] = []
@@ -78,7 +78,7 @@ export function recordToDraft(record: ArtifactRecord, source: DraftSource, draft
     return []
   })
   return { draftId, setKey: record.setKey ?? FIVE_STAR_ARTIFACT_SETS.find(set => set.name === record.set)?.key,
-    name: record.name, slot: record.slot, rarity: 5, level: record.level, main, subs, ...(pendingSubs?.length ? { pendingSubs } : {}), source, issues }
+    name: record.name, slot: record.slot, rarity: 5, level: record.level, main, subs, ...(pendingSubs?.length ? { pendingSubs } : {}), source, ...(record.source?.batchId ? { batchId: record.source.batchId } : {}), issues }
 }
 export function fingerprint(draft: ArtifactDraft): string {
   const fields: unknown[] = [draft.setKey, draft.slot, draft.level, draft.main, draft.subs.map(sub => `${sub.key}:${sub.value}`).sort()]

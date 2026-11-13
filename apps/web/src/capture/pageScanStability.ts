@@ -4,7 +4,8 @@ export function createPageStability() {
   return (observation: PageObservation, cellId: string | undefined, now: number): boolean => {
     if (observation.frameSequence <= sequence) return false
     sequence = observation.frameSequence
-    const next = (cellId === undefined || observation.selectedCellId === cellId) && observation.pageSignature && observation.detailSignature ? JSON.stringify([cellId,observation.pageSignature,observation.detailSignature]) : ''
+    const pageAnchor = observation.scrollAnchor || observation.pageSignature
+    const next = (cellId === undefined || observation.selectedCellId === cellId) && pageAnchor && observation.detailSignature ? JSON.stringify([cellId,pageAnchor,observation.detailSignature]) : ''
     if (!next || next !== signature) { signature = next; count = next ? 1 : 0; since = now; return false }
     count++
     return count >= 3 && now - since >= 120

@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('artifactDesktop', {
     anchor: session => ipcRenderer.invoke('artifact-master:page-scan-command', session, { action: 'anchor' }),
     resetPage: session => ipcRenderer.invoke('artifact-master:page-scan-command', session, { action: 'reset-page' }),
     select: (session, cellId) => ipcRenderer.invoke('artifact-master:page-scan-command', session, { action: 'select', cellId }),
+    scrollDown: (session, ticks) => ipcRenderer.invoke('artifact-master:page-scan-command', session, { action: 'scroll-down', ...(ticks !== undefined ? { ticks } : {}) }),
     freeze: (session, cellId) => ipcRenderer.invoke('artifact-master:page-scan-command', session, { action: 'freeze', cellId }),
     resume: session => ipcRenderer.invoke('artifact-master:page-scan-command', session, { action: 'resume' }),
     pause: session => ipcRenderer.invoke('artifact-master:page-scan-command', session, { action: 'pause' }),

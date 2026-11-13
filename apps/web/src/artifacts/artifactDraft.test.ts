@@ -105,3 +105,12 @@ test('review evaluation reuses unchanged drafts, recomputes edited identity and 
   expect(evaluate(changed).duplicateIds).toEqual([])
   expect(createDraftReviewEvaluator(buildDuplicateIndex([]))(counted).duplicateIds).toEqual([])
 })
+
+test('draftToRecord persists optional batchId for batch rollback and recordToDraft restores it', () => {
+  const withBatch = { ...valid, batchId: 'batch-20261113' }
+  const record = draftToRecord(withBatch, 101)
+  expect(record.source?.batchId).toBe('batch-20261113')
+  expect(recordToDraft(record, 'realtime').batchId).toBe('batch-20261113')
+  const legacyRecord = draftToRecord(valid, 102)
+  expect('batchId' in (legacyRecord.source ?? {})).toBe(false)
+})

@@ -2,7 +2,7 @@ import type { PageObservation, PageScanDriver } from './pageScanTypes'
 import type { WindowFrame } from './nativeWindowCapture'
 export type PageScanBridge = {
   open: (sourceId: string) => Promise<string>; observe: (session: string) => Promise<PageObservation>
-  select: (session: string, cellId: string) => Promise<void>; freeze: (session: string, cellId: string) => Promise<WindowFrame & { gameLocked?: boolean }>
+  select: (session: string, cellId: string) => Promise<void>; scrollDown?: (session: string, ticks?: number) => Promise<void>; freeze: (session: string, cellId: string) => Promise<WindowFrame & { gameLocked?: boolean }>
   resume: (session: string) => Promise<void>; pause: (session: string) => Promise<void>; close: (session: string) => Promise<void>
   prepare: (session: string) => Promise<void>
   anchor: (session: string) => Promise<void>; resetPage: (session: string) => Promise<void>
@@ -11,7 +11,7 @@ export async function createPageScanDriver(bridge: PageScanBridge, sourceId: str
   const session = await bridge.open(sourceId)
   let closed = false
   return {
-    observe: () => bridge.observe(session), prepare: () => bridge.prepare(session), select: cellId => bridge.select(session, cellId), resume: () => bridge.resume(session), pause: () => bridge.pause(session),
+    observe: () => bridge.observe(session), prepare: () => bridge.prepare(session), select: cellId => bridge.select(session, cellId), ...(bridge.scrollDown ? { scrollDown: (ticks?: number) => bridge.scrollDown!(session, ticks) } : {}), resume: () => bridge.resume(session), pause: () => bridge.pause(session),
     anchor: () => bridge.anchor(session), resetPage: () => bridge.resetPage(session),
     async freeze(cellId) {
       const frame = await bridge.freeze(session, cellId)

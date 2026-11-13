@@ -26,8 +26,12 @@ test('page input stays session-bound, denies screen/unlisted sources and rejects
     await assert.rejects(command(event, session, { action: 'exec', path: 'anything' }))
     await assert.rejects(command(event, 'old-session', { action: 'select', cellId: 'r0c0' }))
     await command(event, session, { action: 'select', cellId: 'r0c0' })
-    assert.deepEqual(calls, [{action:'reset-page'}, { action: 'resume' }, {action:'anchor'}, {action:'prepare'}, { action: 'select', cellId: 'r0c0' }])
+    await assert.rejects(command(event, session, { action: 'scroll-down', ticks: 99 }))
+    await assert.rejects(command(event, session, { action: 'scroll-down', ticks: 0 }))
+    await command(event, session, { action: 'scroll-down', ticks: 5 })
+    assert.deepEqual(calls, [{action:'reset-page'}, { action: 'resume' }, {action:'anchor'}, {action:'prepare'}, { action: 'select', cellId: 'r0c0' }, { action: 'scroll-down', ticks: 5 }])
     await command(event, session, { action: 'pause' })
+    await assert.rejects(command(event, session, { action: 'scroll-down', ticks: 5 }))
     await assert.rejects(command(event, session, { action: 'select', cellId: 'r0c1' }))
   } finally { service.dispose() }
 })

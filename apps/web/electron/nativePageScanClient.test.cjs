@@ -137,6 +137,7 @@ test('diagnostic fields pass bounded per-cell mismatch metrics and distinct erro
   const data = sanitizePageObservation({
     ...observation(),
     pageStatus: 'CHANGED',
+    scrollAnchor: '32:4x8:48,60,960,820:deadbeef',
     scriptVersion: 'pagescan-diag-20261110',
     matcherVersion: 'match-20261101-loose',
     layoutIssue: 'EDGE_MOVED r0c0',
@@ -151,6 +152,8 @@ test('diagnostic fields pass bounded per-cell mismatch metrics and distinct erro
     ],
   }, 'window:123:0')
   assert.equal(data.pageStatus, 'CHANGED')
+  assert.equal(data.scrollAnchor, '32:4x8:48,60,960,820:deadbeef')
+  assert.equal(sanitizePageObservation({ ...observation(), scrollAnchor: 'bad<script>' }, 'window:123:0').scrollAnchor, undefined)
   assert.equal(data.scriptVersion, 'pagescan-diag-20261110')
   assert.equal(data.matcherVersion, 'match-20261101-loose')
   assert.deepEqual(data.selection, { best: 0.85, runnerUp: 0.35, candidate: 'r0c0' })
@@ -163,4 +166,13 @@ test('diagnostic fields pass bounded per-cell mismatch metrics and distinct erro
   assert.match(__private.scanError('PAGE_UNCERTAIN:freeze r0c3 layout NO_CARD_ROWS').message, /\[PAGE_UNCERTAIN\].*NO_CARD_ROWS/)
   assert.match(__private.scanError('SELECTION_UNCONFIRMED:freeze r0c3 saw=none').message, /\[SELECTION_UNCONFIRMED\].*saw=none/)
   assert.match(__private.scanError('DETAIL_UNSTABLE:freeze r0c3 aaaa>bbbb').message, /\[DETAIL_UNSTABLE\].*aaaa>bbbb/)
+})
+test('hasFourStar and rowSignatures sanitize through observation while invalid signatures are dropped', () => {
+  const data = sanitizePageObservation({
+    ...observation(),
+    hasFourStar: true,
+    rowSignatures: ['0123456789abcdef', 'bad<tag>', 'fedcba9876543210'],
+  }, 'window:123:0')
+  assert.equal(data.hasFourStar, true)
+  assert.deepEqual(data.rowSignatures, ['0123456789abcdef', 'fedcba9876543210'])
 })

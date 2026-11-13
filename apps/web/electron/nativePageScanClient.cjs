@@ -8,6 +8,9 @@ function sanitizeDiagnostics(value, seen) {
   const result = {}
   if (['SAME', 'TRANSIENT', 'CHANGED', 'UNKNOWN'].includes(value.pageStatus)) result.pageStatus = value.pageStatus
   for (const key of ['scriptVersion', 'matcherVersion']) if (typeof value[key] === 'string' && /^[\w.-]{1,64}$/.test(value[key])) result[key] = value[key]
+  if (typeof value.scrollAnchor === 'string' && /^[\w.,:-]{1,96}$/.test(value.scrollAnchor)) result.scrollAnchor = value.scrollAnchor
+  if (typeof value.hasFourStar === 'boolean') result.hasFourStar = value.hasFourStar
+  if (Array.isArray(value.rowSignatures)) result.rowSignatures = value.rowSignatures.slice(0, 16).filter(item => typeof item === 'string' && /^[a-f0-9]{16,64}$/.test(item))
   if (typeof value.layoutIssue === 'string' && value.layoutIssue) result.layoutIssue = value.layoutIssue.replace(/[^\x20-\x7e]/g, ' ').slice(0, 160)
   if (finite(value.selectionBest, 0, 1) && finite(value.selectionRunnerUp, 0, 1)) result.selection = { best: value.selectionBest, runnerUp: value.selectionRunnerUp, ...(typeof value.selectionCandidate === 'string' && seen.has(value.selectionCandidate) ? { candidate: value.selectionCandidate } : {}) }
   if (finite(value.grabMs, 0, 60000) && finite(value.analyzeMs, 0, 60000)) result.timing = { grabMs: value.grabMs, analyzeMs: value.analyzeMs }
@@ -157,7 +160,7 @@ function createNativePageScanClient(sourceId, scriptPath, options = {}) {
   return {
     start,
     async command(value) {
-      if(!value||!['observe','select','freeze','pause','resume','prepare','anchor','reset-page'].includes(value.action))throw scanError('无效操作')
+      if(!value||!['observe','select','freeze','pause','resume','prepare','anchor','reset-page','scroll-down'].includes(value.action))throw scanError('无效操作')
       if(value.action==='pause')return stopInput()
       if(value.action==='reset-page'){
         await stopInput();if(disposed)throw scanError('SOURCE_CHANGED');savedAnchor=undefined;restoreNeeded=false;return{ok:true}
@@ -167,7 +170,14 @@ function createNativePageScanClient(sourceId, scriptPath, options = {}) {
       if (disposed || !child || token!==epoch) throw scanError('SOURCE_CHANGED')
       await restore();if(disposed||!child||token!==epoch)throw scanError('SOURCE_CHANGED')
       if(pending.size>=4)throw scanError('无效或过多操作')
-      return request({action:value.action,...(value.cellId?{cellId:value.cellId}:{})})
+      const payload = { action: value.action, ...(value.cellId ? { cellId: value.cellId } : {}) }
+      if (value.action === 'scroll-down') {
+        const ticks = value.ticks === undefined ? 5 : value.ticks
+        if (!Number.isInteger(ticks) || ticks < 1 || ticks > 8) throw scanError('无效操作')
+        payload.ticks = ticks
+        savedAnchor = undefined; restoreNeeded = false
+      }
+      return request(payload)
     },
     dispose() { return stopInput().finally(()=>{disposed=true}) },
   }

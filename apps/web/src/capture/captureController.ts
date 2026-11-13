@@ -2,18 +2,22 @@ import type { CaptureSession, CapturedArtifactFrame, createCaptureSession } from
 import type { OcrSession, OcrTimings, createOcrSession } from '../artifacts/ocrService'
 import type { CaptureRoi } from './captureRegion'
 import type { DraftReviewItem } from '../imports/ImportReview'
-import { fingerprint } from '../artifacts/artifactDraft'
+import { fingerprint, type ArtifactDraft } from '../artifacts/artifactDraft'
 import { getRecognitionProblems } from '../imports/recognitionCheck'
 import { createCaptureResources } from './captureResources'
-import { MANUAL_BATCH_LIMIT, PAGE_BATCH_LIMIT, type CaptureJobSnapshot, type CaptureQueueSnapshot, type CaptureRequestOutcome } from './captureQueueTypes'
+import { MANUAL_BATCH_LIMIT, PAGE_BATCH_LIMIT, STREAMING_INFLIGHT_LIMIT, type CaptureJobSnapshot, type CaptureQueueSnapshot, type CaptureRequestOutcome } from './captureQueueTypes'
 export type CaptureStatus = 'inactive' | 'capturing' | 'recognizing' | 'pending' | 'retry' | 'failed' | 'stopped'
 export type CaptureDiagnostic = { requestId: number; jobId: string; attempt: number; rawText: string; captureMs: number; queueWaitMs: number; startupMs?: number; totalMs: number; ocr?: OcrTimings }
+export type AutoCommitResult = { committed: boolean; duplicateIds?: number[] }
 export type CaptureControllerOptions = {
   createCaptureSession: typeof createCaptureSession; createOcrSession: typeof createOcrSession
   onItems: (items: DraftReviewItem[]) => void; onStatus: (status: { state: CaptureStatus; message: string }) => void
   onQueue?: (snapshot: CaptureQueueSnapshot) => void; onCaptured?: (job: CaptureJobSnapshot) => void
   onPreview?: (frame: { image: Blob; width: number; height: number; roi?: CaptureRoi }) => void
   onDiagnostics?: (diagnostic: CaptureDiagnostic) => void; onAccepted?: () => void
+  canAutoCommit?: () => boolean
+  onAutoCommit?: (draft: ArtifactDraft, batchId: string) => AutoCommitResult
+  onDraftRecognized?: (draft: ArtifactDraft) => void
 }
 export type CaptureController = {
   start: (sourceId: string, roi?: CaptureRoi) => Promise<void>; requestCapture: () => CaptureRequestOutcome
@@ -33,6 +37,7 @@ export function createCaptureController(options: CaptureControllerOptions): Capt
   let capture: CaptureSession | undefined, ocr: OcrSession | undefined
   let accepting = false, capturing = false, disposed = false, ocrPaused = false, recovering = false
   let engineError = '', lastArtifact = '', startupMs: number | undefined
+  let autoCommittedCount = 0
   let jobs: Job[] = [], queue: Job[] = [], running: Job | undefined
   let timer: ReturnType<typeof setInterval> | undefined
   const waiters = new Set<{ resolve: () => void; reject: (error: unknown) => void }>()
@@ -40,7 +45,7 @@ export function createCaptureController(options: CaptureControllerOptions): Capt
   const safeNotify = (notify: (() => void) | undefined) => { try { notify?.() } catch { /* Audio is optional. */ } }
   const publish = () => {
     if (disposed) return
-    options.onQueue?.({ batchId, accepting, capturing, ocrPaused, heldSourceBytes: resources.bytes(), jobs: jobs.map(job => ({ ...job.snapshot })) })
+    options.onQueue?.({ batchId, accepting, capturing, ocrPaused, heldSourceBytes: resources.bytes(), autoCommittedCount, jobs: jobs.map(job => ({ ...job.snapshot })) })
     options.onItems(jobs.flatMap(job => job.snapshot.item ? [job.snapshot.item] : []))
   }
   const valid = (job: Job, token: number) => token === generation && !disposed && job.snapshot.state !== 'cancelled'
@@ -79,8 +84,26 @@ export function createCaptureController(options: CaptureControllerOptions): Capt
       const signature = fingerprint(result.draft)
       if (job.snapshot.trigger === 'automatic' && signature === lastArtifact) { discardJob(job.snapshot.id); status('pending', '自动辅助：详情未改变，未重复加入。'); return }
       lastArtifact = signature
-      const draft = { ...result.draft, source: 'realtime' as const, draftId: crypto.randomUUID(), issues: [...result.draft.issues], ...(job.snapshot.gameLocked === true ? { observedGameLocked: true } : {}) }
-      if (jobs.some(other => other !== job && other.snapshot.item && fingerprint(other.snapshot.item.draft) === signature)) draft.issues.push({ field: 'source', code: 'batch-duplicate', severity: 'warning', message: '与批次已有草稿疑似重复；不自动合并，请核实是否为另一件实物。' })
+      const draft: ArtifactDraft = { ...result.draft, source: 'realtime' as const, draftId: crypto.randomUUID(), batchId, issues: [...result.draft.issues], ...(job.snapshot.gameLocked === true ? { observedGameLocked: true } : {}) }
+      options.onDraftRecognized?.(draft)
+      const autoCommitEligible = job.snapshot.trigger === 'page' && Boolean(options.canAutoCommit?.() && options.onAutoCommit) && draft.issues.length === 0
+      if (autoCommitEligible && options.onAutoCommit) {
+        const commitResult = options.onAutoCommit(draft, batchId)
+        if (!valid(job, token)) return
+        if (commitResult.committed) {
+          autoCommittedCount++
+          resources.release(job.snapshot.id)
+          jobs = jobs.filter(other => other !== job)
+          publish()
+          status('pending', `第${job.snapshot.sequence}张已自动入库（本批已入库 ${autoCommittedCount} 件）。`)
+          if (valid(job, token)) safeNotify(options.onAccepted)
+          return
+        }
+        const conflictText = commitResult.duplicateIds?.length ? commitResult.duplicateIds.map(id => `#${id}`).join('、') : '已有圣遗物'
+        draft.issues.push({ field: 'source', code: 'inventory-duplicate', severity: 'warning', message: `与仓库已有 ${conflictText} 疑似重复；已留待人工核对，请决定跳过或保留。` })
+      } else if (jobs.some(other => other !== job && other.snapshot.item && fingerprint(other.snapshot.item.draft) === signature)) {
+        draft.issues.push({ field: 'source', code: 'batch-duplicate', severity: 'warning', message: '与批次已有草稿疑似重复；不自动合并，请核实是否为另一件实物。' })
+      }
       const item: DraftReviewItem = { draft, previewUrl: job.snapshot.previewUrl, rawOcr: result.rawText }
       update(job, { state: 'pending', item }); resources.releaseSource(job.snapshot.id); publish()
       status('pending', '第' + job.snapshot.sequence + '张识别成功，已加入待确认，尚未入库。')
@@ -101,8 +124,14 @@ export function createCaptureController(options: CaptureControllerOptions): Capt
     if (!accepting || !capture || !ocr || disposed) return 'inactive'
     if (ocrPaused) { status('retry', 'OCR引擎已暂停，请先恢复；已有图片保留。'); return 'engine-paused' }
     if (capturing) { status('capturing', '正在截图，请听到捕获提示后再切换；本次按键未接收。'); return 'capture-busy' }
-    const limit = page ? PAGE_BATCH_LIMIT : MANUAL_BATCH_LIMIT
-    if (jobs.length >= limit) { status('pending', `本批任务已满${limit}件（含排队、失败和待确认），请先核对或丢弃。`); return 'capacity' }
+    const streaming = Boolean(page && options.canAutoCommit?.())
+    if (streaming) {
+      const inflight = jobs.filter(job => job.snapshot.state === 'capturing' || job.snapshot.state === 'queued' || job.snapshot.state === 'recognizing').length
+      if (inflight >= STREAMING_INFLIGHT_LIMIT) { status('pending', `后台识别待处理已达${STREAMING_INFLIGHT_LIMIT}件流控上限，暂停前台截图等待消化…`); return 'capacity' }
+    } else {
+      const limit = page ? PAGE_BATCH_LIMIT : MANUAL_BATCH_LIMIT
+      if (jobs.length >= limit) { status('pending', `本批任务已满${limit}件（含排队、失败和待确认），请先核对或丢弃。`); return 'capacity' }
+    }
     if (page && (!/^[a-z0-9-]{1,64}$/i.test(page.pageId) || !/^r\d{1,2}c\d{1,2}$/.test(page.cellId) || !(page.frame.ocrImage instanceof Blob))) return 'inactive'
     const currentCapture = capture, token = generation, started = performance.now(), freezeMs = page?.frame.captureMs ?? 0
     const job: Job = { snapshot: { id: crypto.randomUUID(), batchId, sourceId, sequence: ++sequence, trigger: page ? 'page' : manual ? 'manual' : 'automatic', state: 'capturing', ...(page ? { pageId: page.pageId, cellId: page.cellId } : {}) }, started: started - freezeMs, queuedAt: started, captureMs: 0, attempts: 0, startupMs }
@@ -138,7 +167,7 @@ export function createCaptureController(options: CaptureControllerOptions): Capt
     generation++; accepting = false; capturing = false; clearInterval(timer); timer = undefined
     for (const waiter of waiters) waiter.reject(aborted()); waiters.clear()
     for (const job of jobs) update(job, { state: 'cancelled' })
-    jobs = []; queue = []; running = undefined; resources.clear(); capture?.stop(); capture = undefined
+    jobs = []; queue = []; running = undefined; autoCommittedCount = 0; resources.clear(); capture?.stop(); capture = undefined
     const previous = ocr; ocr = undefined; ocrPaused = false; recovering = false; publish()
     await previous?.dispose(); status('stopped', '批次已结束，未入库任务已丢弃。')
   }

@@ -177,3 +177,28 @@ test('late completion of an old stop cannot hide the controls of a restarted cap
   expect(screen.getByRole('button', { name: '停止采集' })).toBeEnabled()
   expect(screen.queryByRole('button', { name: '启动实时采集' })).not.toBeInTheDocument()
 })
+
+test('full-auto page mode commits valid artifacts, shows completion summary card, and supports batch rollback', async () => {
+  const user = userEvent.setup()
+  let seq = 0, selected = 'r0c0'
+  const committedBatches: string[] = []
+  const onAutoCommit = vi.fn((_draft, batchId: string) => { committedBatches.push(batchId); return { committed: true } })
+  const onRollbackBatch = vi.fn(() => committedBatches.length)
+  const draft = { ...createManualDraft('zhuying-lieren', '生之花'), level: 0, main: { key: 'hpFlat' as const, value: 717 }, subs: [{ key: 'atkFlat' as const, value: 14 }, { key: 'defFlat' as const, value: 16 }, { key: 'elementalMastery' as const, value: 23 }] }
+  mocks.capture.mockResolvedValue({ captureFrame: vi.fn(), stop: vi.fn() })
+  mocks.ocr.mockResolvedValue({ recognize: async () => ({ draft: { ...draft, draftId: crypto.randomUUID() }, confidence: 99, rawText: 'ok' }), dispose: vi.fn(async () => {}) })
+  vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:page'), revokeObjectURL: vi.fn() })
+  window.artifactDesktop = { listCaptureSources: async () => [{ id: 'window:123:0', name: '原神', kind: 'window', thumbnail: 'data:image/png;base64,AA==', appIcon: null }], queryShowcase: vi.fn(), setRealtimeShortcut: vi.fn(async () => true), onRealtimeCapture: () => () => {}, pageScan: {
+    open: async () => 'page-session', close: async () => {}, anchor: async () => {}, resetPage: async () => {}, prepare: async () => {}, resume: async () => {}, pause: async () => {}, select: async (_session, id) => { selected = id }, freeze: async () => ({ sourceId: 'window:123:0', image: 'data:image/png;base64,AA==', width: 3840, height: 2160 }),
+    observe: async () => ({ sourceId: 'window:123:0', width: 3840, height: 2160, geometryKey: '3840x2160@0,0', frameSequence: ++seq, foreground: true, validLayout: true, emergencyStop: false, scrollAnchor: '2:1x2:10,20,200,120:a1b2c3d4', pageSignature: `drift-${seq}`, detailSignature: 'same-attributes', selectedCellId: selected, cells: ['r0c0', 'r0c1'].map((id, col) => ({ id, row: 0, col, rarity: 5 as const, selected: id === selected })) })
+  } }
+  render(<RealtimeCapturePanel existing={[]} onConfirm={vi.fn()} onAutoCommit={onAutoCommit} onRollbackBatch={onRollbackBatch} onClose={vi.fn()} />)
+  await user.click(screen.getByRole('button', { name: '刷新窗口' })); await user.click(await screen.findByRole('button', { name: /原神/ }))
+  await user.click(screen.getByRole('radio', { name: '当前页扫描' }))
+  await user.click(screen.getByRole('button', { name: '启动当前页扫描' }))
+  await waitFor(() => expect(screen.getByText(/本次全自动扫描完成：共采集 2 件，已自动入库 2 件，另有 0 件需要你核对/)).toBeVisible(), { timeout: 3000 })
+  expect(onAutoCommit).toHaveBeenCalledTimes(2)
+  await user.click(screen.getByRole('button', { name: '撤销本次自动入库的 2 件' }))
+  expect(onRollbackBatch).toHaveBeenCalledTimes(1)
+  expect(onRollbackBatch).toHaveBeenCalledWith(committedBatches[0])
+})

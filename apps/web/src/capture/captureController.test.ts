@@ -80,3 +80,55 @@ test('automatic capture ignores background changes for the same artifact but exp
     expect(x.items.at(-1)).toHaveLength(3)
   } finally { await x.controller.dispose(); vi.useRealTimers() }
 })
+
+test('streaming page auto-commit saves valid 5-star items, frees blobs immediately, and routes duplicates/anomalies to manual review', async () => {
+  const validDraft = () => ({ ...createManualDraft('zhuying-lieren', '生之花'), level: 0, main: { key: 'hpFlat' as const, value: 717 }, subs: [{ key: 'atkFlat' as const, value: 14 }, { key: 'defFlat' as const, value: 16 }, { key: 'elementalMastery' as const, value: 23 }] })
+  const committed: Array<{ batchId: string; draftId: string }> = []
+  let queueSnap: import('./captureQueueTypes').CaptureQueueSnapshot | undefined
+  let items: DraftReviewItem[] = []
+  let mode: 'commit' | 'dup' | 'warning' = 'commit'
+  const recognize = vi.fn(async () => {
+    const draft = validDraft()
+    if (mode === 'warning') draft.issues.push({ field: 'subs', code: 'ocr-conflict', severity: 'warning', message: '副词条疑似遮挡' })
+    return { draft, rawText: 'ocr ok', confidence: 95 }
+  })
+  const controller = createCaptureController({
+    createCaptureSession: vi.fn(async () => ({ captureFrame: async () => ({ ocrImage: new Blob(['frame']), width: 1920, height: 1080, roi }), stop: vi.fn() })),
+    createOcrSession: vi.fn(async () => ({ recognize, dispose: vi.fn(async () => {}) })),
+    onItems: next => { items = next },
+    onQueue: next => { queueSnap = next },
+    onStatus: vi.fn(),
+    canAutoCommit: () => true,
+    onAutoCommit: (draft, batchId) => {
+      if (mode === 'dup') return { committed: false, duplicateIds: [12] }
+      committed.push({ batchId, draftId: draft.draftId })
+      return { committed: true }
+    },
+  })
+  vi.stubGlobal('URL', { createObjectURL: vi.fn(() => `blob:${Math.random()}`), revokeObjectURL: vi.fn() })
+  try {
+    await controller.start('window:1')
+    expect(controller.requestPageCapture({ pageId: 'page-1', cellId: 'r0c0', frame: { ocrImage: new Blob(['f1']), width: 1920, height: 1080, roi } })).toBe('started')
+    await controller.drain()
+    expect(committed).toHaveLength(1)
+    expect(committed[0].batchId).toBe(queueSnap?.batchId)
+    expect(queueSnap?.autoCommittedCount).toBe(1)
+    expect(queueSnap?.heldSourceBytes).toBe(0)
+    expect(queueSnap?.jobs).toHaveLength(0)
+    expect(items).toHaveLength(0)
+
+    mode = 'dup'
+    expect(controller.requestPageCapture({ pageId: 'page-1', cellId: 'r0c1', frame: { ocrImage: new Blob(['f2']), width: 1920, height: 1080, roi } })).toBe('started')
+    await controller.drain()
+    expect(committed).toHaveLength(1)
+    expect(items).toHaveLength(1)
+    expect(items[0].draft.issues.some(i => i.code === 'inventory-duplicate' && i.message.includes('#12'))).toBe(true)
+
+    mode = 'warning'
+    expect(controller.requestPageCapture({ pageId: 'page-1', cellId: 'r0c2', frame: { ocrImage: new Blob(['f3']), width: 1920, height: 1080, roi } })).toBe('started')
+    await controller.drain()
+    expect(committed).toHaveLength(1)
+    expect(items).toHaveLength(2)
+    expect(queueSnap?.heldSourceBytes).toBe(0)
+  } finally { await controller.dispose() }
+})

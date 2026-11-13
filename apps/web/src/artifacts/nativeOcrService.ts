@@ -1,7 +1,7 @@
 import type { NativeOcrBridge, NativeOcrLine } from './nativeOcrTypes'
 import type { OcrSession, OcrDraftResult } from './ocrService'
 import { detectArtifactDetail } from './detailDetection'
-import { cropDetailRegion } from '../capture/captureRegion'
+import { cropDetailRegion, type CaptureRoi } from '../capture/captureRegion'
 import { parseArtifactOcr } from './artifactOcr'
 import { ocrToDraft } from '../imports/manualDraft'
 import { parseStat, STAT_DEFINITIONS } from './statModel'
@@ -49,15 +49,18 @@ function asDataUrl(image: Blob): Promise<string> {
 export async function createNativeOcrSession(bridge: NativeOcrBridge, options: { mode?: 'auto' | 'general'; captureMetadata?: boolean } = {}): Promise<OcrSession> {
   const session = unwrapOcrReply(await bridge.open())
   const mode = options.mode ?? readNativeOcrMode()
-  let disposed = false, tail: Promise<unknown> = Promise.resolve()
+  let disposed = false, tail: Promise<unknown> = Promise.resolve(), lastRoi: CaptureRoi | undefined
   return {
     recognize(image, roi) {
       const job = tail.catch(() => {}).then(async (): Promise<OcrDraftResult> => {
         if (disposed) throw Error('识别会话已经结束。')
         const started = performance.now()
-        const located = roi ? { image: await cropDetailRegion(image, roi), roi } : await detectArtifactDetail(image)
+        const located = roi ? { image: await cropDetailRegion(image, roi), roi } : await detectArtifactDetail(image, { hintRoi: lastRoi, computeLayout: mode === 'auto' })
+        lastRoi = located.roi
         const locatedAt = performance.now()
-        const layout = mode === 'auto' ? await detectArtifactFieldLayout(located.image).catch(() => null) : null
+        const layout = mode === 'auto'
+          ? ('layout' in located && located.layout !== undefined ? located.layout : await detectArtifactFieldLayout(located.image).catch(() => null))
+          : null
         const encoded = await asDataUrl(located.image), preparedAt = performance.now()
         if (disposed) throw Error('识别会话已经结束。')
         const result = unwrapOcrReply(await bridge.recognize(session, encoded, { protocolVersion: 2, mode, ...(layout ? { layout } : {}) })), recognizedAt = performance.now()

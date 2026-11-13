@@ -1,7 +1,7 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadLibrary, saveLibrary } from './storage/libraryRepository'
 import { parseLibraryBackup, type LibraryState } from './storage/libraryValidation'
-import { applyImportDecisions, recordToDraft, type ArtifactDraft, type ImportDecision } from './artifacts/artifactDraft'
+import { applyImportDecisions, findDuplicateIds, recordToDraft, type ArtifactDraft, type ImportDecision } from './artifacts/artifactDraft'
 import { ManualEntry } from './imports/ManualEntry'
 import { ImportReview, type DraftReviewItem } from './imports/ImportReview'
 import { UidShowcaseImport } from './imports/UidShowcaseImport'
@@ -24,7 +24,7 @@ import { createCatalogState } from './pages/catalogState'
 import { DEFAULT_FILTERS, filterAndSort } from './warehouse/warehouseModel'
 import { mergeRetainedCharacterAssets, migrateArtifactLibrary } from './artifacts/migrateArtifactData'
 import { readStoredAssetMap } from './assetStorage'
-import type { ArtifactSetKey } from './artifacts/types'
+import type { ArtifactRecord } from './artifacts/types'
 import {
   Download, Plus, ScanLine, Sparkles, Upload, MonitorUp,
 } from 'lucide-react'
@@ -37,14 +37,12 @@ import './imports/imports.css'
 import './queue.css'
 import './pages/page.css'
 
-type Slot = '生之花' | '死之羽' | '时之沙' | '空之杯' | '理之冠'
-type Artifact = {
-  id: number; name: string; set: string; setKey?: ArtifactSetKey; slot: Slot; level: number; score: number
-  main: string; subs: string[]; locked: boolean; hue: string
-}
+type Artifact = ArtifactRecord
 
 function App() {
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  const artifactsRef = useRef<Artifact[]>(artifacts)
+  artifactsRef.current = artifacts
   const [, setSelectedId] = useState(1)
   const [warehouseScope, setWarehouseScope] = useState<'all' | 'character'>('all')
   const [scoringOptions, setScoringOptions] = useState<ScoringOptions>({ setMode: 'recommended' })
@@ -243,6 +241,28 @@ function App() {
     }
     reviewSavedRef.current = true
   }
+  function handleAutoCommit(draft: ArtifactDraft, batchId: string): { committed: boolean; duplicateIds?: number[] } {
+    if (!storageReady || storageBusyRef.current) return { committed: false }
+    const existingBeforeBatch = artifactsRef.current.filter(item => item.source?.batchId !== batchId)
+    const duplicateIds = findDuplicateIds(draft, existingBeforeBatch)
+    if (duplicateIds.length > 0) return { committed: false, duplicateIds }
+    const result = applyImportDecisions(artifactsRef.current, [{ draft: { ...draft, batchId }, action: 'add' }], snapshotRef.current.trash.map(item => item.id))
+    if (!result.added) return { committed: false }
+    artifactsRef.current = result.artifacts
+    setArtifacts(result.artifacts)
+    return { committed: true }
+  }
+  function handleRollbackBatch(batchId: string): number {
+    if (!storageReady || storageBusyRef.current || !batchId) return 0
+    const removedIds = new Set(artifactsRef.current.filter(item => item.source?.batchId === batchId).map(item => item.id))
+    if (!removedIds.size) return 0
+    const nextArtifacts = artifactsRef.current.filter(item => !removedIds.has(item.id))
+    artifactsRef.current = nextArtifacts
+    setArtifacts(nextArtifacts)
+    setQueueIds(current => current.filter(id => !removedIds.has(id)))
+    setQueueFeedback(`已撤销本次自动入库的 ${removedIds.size} 件圣遗物。`)
+    return removedIds.size
+  }
   function closeImportReview() {
     setReviewItems(null); setManualTargetId(undefined)
     if (reviewSavedRef.current && continueEntryRef.current) { setManualDraft(createManualDraft(manualDraft?.setKey, manualDraft?.slot)); setShowModal(true) }
@@ -373,7 +393,7 @@ function App() {
     </section>
     <PageNavigation active={activePage} onNavigate={navigateTo} disabled={navigationBlocked} mobile />
 
-    {showRealtime && <div className="modal-backdrop"><RealtimeCapturePanel existing={artifacts} onConfirm={confirmImport} onClose={() => setShowRealtime(false)} /></div>}
+    {showRealtime && <div className="modal-backdrop"><RealtimeCapturePanel existing={artifacts} onConfirm={confirmImport} onAutoCommit={handleAutoCommit} onRollbackBatch={handleRollbackBatch} onClose={() => setShowRealtime(false)} /></div>}
 
     {showModal && <div className="modal-backdrop"><ManualEntry key={manualDraft?.draftId} initial={manualDraft} onReview={reviewManual} onCancel={() => { setShowModal(false); setManualTargetId(undefined) }} /></div>}
     {reviewItems && <div className="modal-backdrop"><ImportReview key={reviewItems.map(item => item.draft.draftId).join(':')} items={reviewItems} existing={artifacts} editTargetId={manualTargetId} onConfirm={confirmImport} onCancel={closeImportReview} /></div>}

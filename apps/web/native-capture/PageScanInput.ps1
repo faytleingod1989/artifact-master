@@ -36,22 +36,24 @@ public class ArtifactPageScanner : IDisposable {
   [DllImport("user32.dll")] static extern uint SendInput(uint count,INPUT[] inputs,int size);
   // Versions are reported with every observation so a paused page can be traced
   // to the exact matcher that produced it (packaged script vs. source drift).
-  public const string ScriptVersion="pagescan-diag-20261110";
+  public const string ScriptVersion="pagescan-p1-20261113";
   public const string MatcherVersion="match-20261101-loose";
   public class Cell { public string id; public int row,col,rarity=5; public bool selected; public bool? gameLocked; internal bool emphasized; internal Rectangle rect; internal byte[] appearance,canonical; }
   // Diagnostic only: why ONE fixed card did not match its sealed reference.
   // raw = unnormalized 1.00x, norm = best normalized pose. Each array is
   // [upperNcc,upperMae,lowerNcc,lowerMae,levelNcc,levelMae]. Never used to accept.
   public class CellMatch { public string id,branch; public bool referenceEmphasized,currentEmphasized; public double pose; public double[] raw,norm; }
-  public class Observation { public int width,height; public long frameSequence; public bool foreground,validLayout,emergencyStop; public string geometryKey="",pageSignature="",gridSignature="",detailSignature="",selectedCellId; public Cell[] cells=new Cell[0];
+  public class Observation { public int width,height; public long frameSequence; public bool foreground,validLayout,emergencyStop,hasFourStar; public string geometryKey="",pageSignature="",gridSignature="",detailSignature="",scrollAnchor="",selectedCellId; public Cell[] cells=new Cell[0]; public string[] rowSignatures=new string[0];
     public string pageStatus="UNKNOWN",scriptVersion=ScriptVersion,matcherVersion=MatcherVersion,layoutIssue="",selectionCandidate; public double selectionBest,selectionRunnerUp,grabMs,analyzeMs; public CellMatch[] mismatches=new CellMatch[0]; }
-  public static void RejectCursorOverlap(Observation value,int x,int y) {
-    if(value==null)return;
-    bool unsafePointer=x<0||y<0||value.cells.Any(cell=>{
+  static bool PointerOverlapsCells(Observation value,int x,int y) {
+    return value!=null&&(x<0||y<0||value.cells.Any(cell=>{
       var r=cell.rect;int margin=Math.Max(3,Math.Min(r.Width,r.Height)/30);
       return x>=r.Left-margin&&x<=r.Right+margin&&y>=r.Top-margin&&y<=r.Top+r.Height*1.19+margin;
-    });
-    if(unsafePointer){value.selectedCellId=null;foreach(var cell in value.cells)cell.selected=false;}
+    }));
+  }
+  public static void RejectCursorOverlap(Observation value,int x,int y) {
+    if(value==null)return;
+    if(PointerOverlapsCells(value,x,y)){value.selectedCellId=null;foreach(var cell in value.cells)cell.selected=false;}
   }
   bool ReadPointer(out POINT pointer) {
     pointer=new POINT();return GetCursorPos(out pointer)&&ScreenToClient(handle,ref pointer);
@@ -64,6 +66,8 @@ public class ArtifactPageScanner : IDisposable {
   readonly IntPtr handle; readonly uint processId; readonly long started; readonly Timer stopTimer;
   volatile bool paused=true, emergency=false;
   Observation last; long sequence;
+  Bitmap lastBitmap; long lastBitmapMs;
+  void ClearLastBitmap() { if(lastBitmap!=null){try{lastBitmap.Dispose();}catch{}lastBitmap=null;} lastBitmapMs=0; }
   Cell[] gridAnchor; string anchorGeometry;
   public uint ProcessId { get { return processId; } }
   public string Started { get { return started.ToString(); } }
@@ -103,6 +107,7 @@ public class ArtifactPageScanner : IDisposable {
   }
   static bool Gold(byte[] p,int i) { int b=p[i],g=p[i+1],r=p[i+2]; return r>100&&g>65&&r>g*1.08&&g>b*1.20&&b<r*.75; }
   static bool Bright(byte[] p,int i) { int b=p[i],g=p[i+1],r=p[i+2]; return Math.Min(r,Math.Min(g,b))>205&&Math.Max(r,Math.Max(g,b))-Math.Min(r,Math.Min(g,b))<60; }
+  static bool Purple(byte[] p,int i) { int b=p[i],g=p[i+1],r=p[i+2]; return b>95&&r>70&&b>g*1.20&&r>g*1.05&&Math.Abs(b-r)<65; }
   static List<int[]> Runs(List<int> values,int gap) {
     var result=new List<int[]>();
     foreach(int value in values) { if(result.Count==0||value-result[result.Count-1][1]>gap) result.Add(new int[]{value,value}); else result[result.Count-1][1]=value; }
@@ -413,7 +418,70 @@ public class ArtifactPageScanner : IDisposable {
     }
     pageWriter.Dispose();pageBytes.Dispose();
     gridWriter.Dispose();gridBytes.Dispose();
-    observation.cells=cells.ToArray(); observation.validLayout=true; observation.pageSignature=pageSignature; observation.detailSignature=detail.ToString("x8"); return observation;
+    observation.cells=cells.ToArray(); observation.validLayout=true; observation.pageSignature=pageSignature; observation.detailSignature=detail.ToString("x8"); observation.scrollAnchor=ComputeScrollAnchor(p,width,height,step,cells);
+    observation.rowSignatures=ComputeRowSignatures(cells);
+    observation.hasFourStar=DetectFourStarBoundary(p,width,height,step,cells,reference,referenceWidth,referenceHeight);
+    return observation;
+  }
+  static string[] ComputeRowSignatures(List<Cell> cells) {
+    if(cells==null||cells.Count==0)return new string[0];
+    int maxRow=cells.Max(c=>c.row);
+    var result=new string[maxRow+1];
+    using(var sha=SHA256.Create()) {
+      for(int row=0;row<=maxRow;row++) {
+        using(var ms=new MemoryStream()) {
+          foreach(var c in cells.Where(x=>x.row==row).OrderBy(x=>x.col)) {
+            var data=c.canonical??c.appearance;
+            if(data!=null)ms.Write(data,0,data.Length);
+          }
+          result[row]=BitConverter.ToString(sha.ComputeHash(ms.ToArray())).Replace("-","").ToLowerInvariant().Substring(0,16);
+        }
+      }
+    }
+    return result;
+  }
+  static bool DetectFourStarBoundary(byte[] p,int width,int height,int step,List<Cell> cells,List<Rectangle> reference,double refWidth,double refHeight) {
+    if(cells==null||cells.Count==0||reference==null||reference.Count==0)return false;
+    int maxRow=cells.Max(c=>c.row);
+    var lastRow=cells.Where(c=>c.row==maxRow).OrderBy(c=>c.col).ToList();
+    Rectangle? probe=null;
+    if(lastRow.Count<reference.Count) {
+      var template=reference[lastRow.Count];
+      probe=new Rectangle(template.Left,lastRow[0].rect.Top,template.Width,(int)refHeight);
+    } else {
+      int spacing=maxRow>=1?cells.First(c=>c.row==maxRow).rect.Top-cells.First(c=>c.row==maxRow-1).rect.Top:(int)Math.Round(refHeight*1.32);
+      int nextTop=lastRow[0].rect.Top+Math.Max((int)refHeight,spacing);
+      if(nextTop+(int)(refHeight*.85)<=height*.92) probe=new Rectangle(reference[0].Left,nextTop,(int)refWidth,(int)refHeight);
+    }
+    if(probe==null)return false;
+    var r=probe.Value;
+    int x0=Math.Max(0,r.Left+(int)(r.Width*.15)),x1=Math.Min(width,r.Left+(int)(r.Width*.85));
+    int y0=Math.Max(0,r.Top+(int)(r.Height*.10)),y1=Math.Min(height,r.Top+(int)(r.Height*.75));
+    int purple=0,total=0;
+    for(int y=y0;y<y1;y+=step) for(int x=x0;x<x1;x+=step) { total++; if(Purple(p,(y*width+x)*4))purple++; }
+    return total>=12&&purple>=total*.25;
+  }
+  static string ComputeScrollAnchor(byte[] p,int width,int height,int step,List<Cell> cells) {
+    if(cells==null||cells.Count==0)return "";
+    int maxRow=cells.Max(c=>c.row)+1,maxCol=cells.Max(c=>c.col)+1;
+    int minLeft=cells.Min(c=>c.rect.Left),minTop=cells.Min(c=>c.rect.Top),maxRight=cells.Max(c=>c.rect.Right),maxBottom=cells.Max(c=>c.rect.Bottom);
+    int sbLeft=Math.Min(width-Math.Max(2,step*2),maxRight+Math.Max(2,step*2));
+    int sbRight=Math.Min(width,Math.Max(sbLeft+Math.Max(2,step*2),(int)(width*.715)));
+    int sbTop=Math.Max(0,(int)(height*.08)),sbBottom=Math.Min(height,(int)(height*.88));
+    uint sbHash=2166136261;
+    if(sbRight>sbLeft&&sbBottom>sbTop+16) {
+      int bandHeight=Math.Max(1,(sbBottom-sbTop)/16);
+      for(int band=0;band<16;band++) {
+        int y0=sbTop+band*bandHeight,y1=band==15?sbBottom:Math.Min(sbBottom,y0+bandHeight);
+        long sum=0;int count=0;
+        for(int y=y0;y<y1;y+=step) for(int x=sbLeft;x<sbRight;x+=step) {
+          int i=(y*width+x)*4;sum+=p[i]+p[i+1]+p[i+2];count++;
+        }
+        int bucket=count>0?(int)(sum/(count*3)/16):0;
+        sbHash=Mix(sbHash,bucket);
+      }
+    }
+    return cells.Count+":"+maxRow+"x"+maxCol+":"+(minLeft/Math.Max(1,step))+","+(minTop/Math.Max(1,step))+","+(maxRight/Math.Max(1,step))+","+(maxBottom/Math.Max(1,step))+":"+sbHash.ToString("x8");
   }
   // ---- Local, bounded diagnostics (never uploaded, never deletes files) ----
   // One session directory per helper process: events.jsonl plus JPEG frames
@@ -444,7 +512,7 @@ public class ArtifactPageScanner : IDisposable {
         b.Append(",\"seq\":").Append(o.frameSequence).Append(",\"fg\":").Append(o.foreground?"true":"false").Append(",\"valid\":").Append(o.validLayout?"true":"false");
         b.Append(",\"status\":\"").Append(Esc(o.pageStatus)).Append("\",\"issue\":\"").Append(Esc(o.layoutIssue)).Append("\",\"cells\":").Append(o.cells.Length);
         b.Append(",\"selected\":\"").Append(Esc(o.selectedCellId)).Append("\",\"candidate\":\"").Append(Esc(o.selectionCandidate)).Append("\",\"best\":").Append(F(o.selectionBest)).Append(",\"runnerUp\":").Append(F(o.selectionRunnerUp));
-        b.Append(",\"page\":\"").Append(o.pageSignature.Length>=8?o.pageSignature.Substring(0,8):"").Append("\",\"grid\":\"").Append(o.gridSignature.Length>=8?o.gridSignature.Substring(0,8):"").Append("\",\"detail\":\"").Append(o.detailSignature).Append('"');
+        b.Append(",\"page\":\"").Append(o.pageSignature.Length>=8?o.pageSignature.Substring(0,8):"").Append("\",\"grid\":\"").Append(o.gridSignature.Length>=8?o.gridSignature.Substring(0,8):"").Append("\",\"detail\":\"").Append(o.detailSignature).Append("\",\"scrollAnchor\":\"").Append(Esc(o.scrollAnchor)).Append('"');
         b.Append(",\"grabMs\":").Append(F(grabMs)).Append(",\"analyzeMs\":").Append(F(analyzeMs));
         b.Append(",\"mismatches\":[");
         for(int i=0;i<o.mismatches.Length;i++){var m=o.mismatches[i];if(i>0)b.Append(',');b.Append("{\"id\":\"").Append(m.id).Append("\",\"branch\":\"").Append(m.branch).Append("\",\"refEmph\":").Append(m.referenceEmphasized?"true":"false").Append(",\"curEmph\":").Append(m.currentEmphasized?"true":"false").Append(",\"pose\":").Append(F(m.pose)).Append(",\"raw\":").Append(Nums(m.raw)).Append(",\"norm\":").Append(Nums(m.norm)).Append('}');}
@@ -476,8 +544,8 @@ public class ArtifactPageScanner : IDisposable {
   }
   public Observation Observe() {
     Check(false); int width,height; string geometry=Geometry(out width,out height);
-    if(gridAnchor!=null&&geometry!=anchorGeometry) throw new Exception("GEOMETRY_CHANGED");
-    if(GetForegroundWindow()!=handle||IsIconic(handle)) { var away=new Observation { width=width,height=height,geometryKey=geometry,frameSequence=++sequence,foreground=false,emergencyStop=emergency,layoutIssue="NOT_FOREGROUND" }; WriteEvent("observe",away,0,0,null,null); return away; }
+    if(gridAnchor!=null&&geometry!=anchorGeometry) { ClearLastBitmap(); throw new Exception("GEOMETRY_CHANGED"); }
+    if(GetForegroundWindow()!=handle||IsIconic(handle)) { ClearLastBitmap(); var away=new Observation { width=width,height=height,geometryKey=geometry,frameSequence=++sequence,foreground=false,emergencyStop=emergency,layoutIssue="NOT_FOREGROUND" }; WriteEvent("observe",away,0,0,null,null); return away; }
     POINT pointer;bool pointerOk=ReadPointer(out pointer);
     var watch=Stopwatch.StartNew();
     using(var bitmap=Grab()) {
@@ -486,6 +554,11 @@ public class ArtifactPageScanner : IDisposable {
       current.grabMs=Math.Round(grabMs,1);current.analyzeMs=Math.Round(watch.Elapsed.TotalMilliseconds-grabMs,1);
       string frame=null;
       if(gridAnchor!=null&&(current.mismatches.Length>0||!current.validLayout))frame=SaveFrame(bitmap,"observe-"+current.frameSequence+(current.validLayout?"-mismatch":"-layout"),true);
+      ClearLastBitmap();
+      if(current.validLayout&&current.foreground) {
+        lastBitmap=(Bitmap)bitmap.Clone();
+        lastBitmapMs=clock!=null?clock.ElapsedMilliseconds:0;
+      }
       WriteEvent("observe",current,current.grabMs,current.analyzeMs,null,frame);
       last=current; return current;
     }
@@ -496,7 +569,8 @@ public class ArtifactPageScanner : IDisposable {
     if(gridAnchor==null) {
       using(var bitmap=Grab()) {
         var current=Analyze(bitmap,last.cells);
-        if(!current.validLayout||current.pageSignature!=last.pageSignature){var code=(current.validLayout?"PAGE_CHANGED:":"PAGE_UNCERTAIN:")+"anchor "+Summary(current);WriteEvent("anchor",current,0,0,code,SaveFrame(bitmap,"anchor-rejected",false));throw new Exception(code);}
+        bool anchorChanged=!current.validLayout||current.cells.Length!=last.cells.Length||(!String.IsNullOrEmpty(last.scrollAnchor)?current.scrollAnchor!=last.scrollAnchor:current.pageSignature!=last.pageSignature);
+        if(anchorChanged){var code=(current.validLayout?"PAGE_CHANGED:":"PAGE_UNCERTAIN:")+"anchor "+Summary(current);WriteEvent("anchor",current,0,0,code,SaveFrame(bitmap,"anchor-rejected",false));throw new Exception(code);}
         WriteEvent("anchor",current,0,0,null,SaveFrame(bitmap,"anchor-reference",false));
       }
       InputReady();gridAnchor=last.cells.Select(c=>new Cell{id=c.id,row=c.row,col=c.col,rect=c.rect,selected=c.selected,emphasized=c.emphasized,appearance=(byte[])c.appearance.Clone(),canonical=c.canonical==null?null:(byte[])c.canonical.Clone()}).ToArray();anchorGeometry=last.geometryKey;
@@ -551,11 +625,8 @@ public class ArtifactPageScanner : IDisposable {
   public void Select(string id) {
     InputReady();
     var watch=Stopwatch.StartNew();
-    using(var bitmap=Grab()) {
-      var current=Analyze(bitmap,gridAnchor);
-      if(!current.validLayout||current.pageSignature!=last.pageSignature){var code=(current.validLayout?"PAGE_CHANGED:":"PAGE_UNCERTAIN:")+"before "+id+" "+Summary(current);WriteEvent("select",current,0,watch.Elapsed.TotalMilliseconds,code,SaveFrame(bitmap,"select-"+id+"-rejected",false));throw new Exception(code);}
-    }
     var cell=last.cells.SingleOrDefault(c=>c.id==id); if(cell==null) throw new Exception("UNKNOWN_CELL");
+    ClearLastBitmap();
     POINT point=new POINT { X=cell.rect.Left+cell.rect.Width/2,Y=cell.rect.Top+cell.rect.Height/2 };
     if(!ClientToScreen(handle,ref point)) throw new Exception("SOURCE_CHANGED");
     InputReady(); if(!SetCursorPos(point.X,point.Y)) throw new Exception("INPUT_FAILED"); InputReady();
@@ -564,23 +635,66 @@ public class ArtifactPageScanner : IDisposable {
     Prepare();
     WriteEvent("select "+id,null,0,0,"ok ms="+F(watch.Elapsed.TotalMilliseconds),null);
   }
+  public void ScrollDown(int ticks=5) {
+    InputReady();
+    var watch=Stopwatch.StartNew();
+    int count=Math.Max(1,Math.Min(8,ticks));
+    var targetCell=last.cells[last.cells.Length/2];
+    ClearLastBitmap(); gridAnchor=null; anchorGeometry=null;
+    POINT point=new POINT { X=targetCell.rect.Left+targetCell.rect.Width/2,Y=targetCell.rect.Top+targetCell.rect.Height/2 };
+    if(!ClientToScreen(handle,ref point)) throw new Exception("SOURCE_CHANGED");
+    InputReady(); if(!SetCursorPos(point.X,point.Y)) throw new Exception("INPUT_FAILED");
+    for(int i=0;i<count;i++) {
+      Check(true);
+      if(paused||emergency||(GetAsyncKeyState(2)&0x8000)!=0) throw new Exception("INPUT_PAUSED");
+      var wheel=new INPUT[]{new INPUT { type=0,mouse=new MOUSEINPUT { flags=0x0800,mouseData=unchecked((uint)-120) } }};
+      if(SendInput(1,wheel,Marshal.SizeOf(typeof(INPUT)))!=1) throw new Exception("INPUT_FAILED");
+      if(i+1<count) Thread.Sleep(55);
+    }
+    Prepare();
+    last=null;
+    WriteEvent("scroll-down",null,0,0,"ok ticks="+count+" ms="+F(watch.Elapsed.TotalMilliseconds),null);
+  }
   public string Freeze(string id,out int width,out int height,out bool? gameLocked) {
-    InputReady(); POINT pointer;bool pointerOk=ReadPointer(out pointer); var watch=Stopwatch.StartNew(); using(var bitmap=Grab()) {
+    InputReady(); POINT pointer;bool pointerOk=ReadPointer(out pointer); var watch=Stopwatch.StartNew();
+    if(clock!=null&&lastBitmap!=null&&last!=null&&last.validLayout&&last.selectedCellId==id&&(clock.ElapsedMilliseconds-lastBitmapMs)<=1500) {
+      if(!pointerOk||PointerOverlapsCells(last,pointer.X,pointer.Y)) {
+        ClearLastBitmap();
+        string overlapCode="SELECTION_UNCONFIRMED:freeze "+id+" pointer-overlap";
+        WriteEvent("freeze "+id,last,0,watch.Elapsed.TotalMilliseconds,overlapCode,null);
+        throw new Exception(overlapCode);
+      }
+      var cachedCell=last.cells.SingleOrDefault(c=>c.id==id);
+      if(cachedCell==null) {
+        ClearLastBitmap();
+        throw new Exception("SELECTION_UNCONFIRMED:freeze "+id+" saw=none");
+      }
+      width=lastBitmap.Width; height=lastBitmap.Height; gameLocked=cachedCell.gameLocked;
+      using(var bytes=new MemoryStream()) {
+        lastBitmap.Save(bytes,ImageFormat.Png);
+        if(bytes.Length>16777216) throw new Exception("FRAME_TOO_LARGE");
+        InputReady();
+        WriteEvent("freeze "+id,null,0,0,"cached ok ms="+F(watch.Elapsed.TotalMilliseconds)+" pngBytes="+bytes.Length,null);
+        return "data:image/png;base64,"+Convert.ToBase64String(bytes.ToArray());
+      }
+    }
+    using(var bitmap=Grab()) {
       var check=Analyze(bitmap,gridAnchor);
       GuardPointer(check,pointer,pointerOk);
       string code=null;
+      bool pageChanged=last!=null&&(!String.IsNullOrEmpty(last.scrollAnchor)&&!String.IsNullOrEmpty(check.scrollAnchor)?check.scrollAnchor!=last.scrollAnchor:check.pageSignature!=last.pageSignature);
       if(!check.validLayout)code="PAGE_UNCERTAIN:freeze "+id+" "+Summary(check);
       else if(check.selectedCellId!=id)code="SELECTION_UNCONFIRMED:freeze "+id+" saw="+(check.selectedCellId??"none")+" candidate="+(check.selectionCandidate??"none")+" best="+F(check.selectionBest)+" runnerUp="+F(check.selectionRunnerUp);
-      else if(check.pageSignature!=last.pageSignature)code="PAGE_CHANGED:freeze "+id+" "+Summary(check);
-      else if(check.detailSignature!=last.detailSignature)code="DETAIL_UNSTABLE:freeze "+id+" "+last.detailSignature+">"+check.detailSignature;
+      else if(pageChanged)code="PAGE_CHANGED:freeze "+id+" "+Summary(check);
+      else if(last!=null&&check.detailSignature!=last.detailSignature)code="DETAIL_UNSTABLE:freeze "+id+" "+last.detailSignature+">"+check.detailSignature;
       if(code!=null){WriteEvent("freeze "+id,check,0,watch.Elapsed.TotalMilliseconds,code,SaveFrame(bitmap,"freeze-"+id+"-rejected",false));throw new Exception(code);}
       InputReady(); width=bitmap.Width; height=bitmap.Height; gameLocked=check.cells.Single(c=>c.id==id).gameLocked;
       using(var bytes=new MemoryStream()) { bitmap.Save(bytes,ImageFormat.Png); if(bytes.Length>16777216) throw new Exception("FRAME_TOO_LARGE"); InputReady(); WriteEvent("freeze "+id,null,0,0,"ok ms="+F(watch.Elapsed.TotalMilliseconds)+" pngBytes="+bytes.Length,null); return "data:image/png;base64,"+Convert.ToBase64String(bytes.ToArray()); }
     }
   }
-  public void Pause() { paused=true; }
+  public void Pause() { paused=true; ClearLastBitmap(); }
   public void Resume() { Check(false); if((GetAsyncKeyState(2)&0x8000)!=0) throw new Exception("INPUT_PAUSED"); emergency=false; paused=false; }
-  public void Dispose() { paused=true; if(stopTimer!=null) stopTimer.Dispose(); if(diagnosticsLog!=null){try{diagnosticsLog.Dispose();}catch{}diagnosticsLog=null;} }
+  public void Dispose() { paused=true; ClearLastBitmap(); if(stopTimer!=null) stopTimer.Dispose(); if(diagnosticsLog!=null){try{diagnosticsLog.Dispose();}catch{}diagnosticsLog=null;} }
 }
 '@
 if ($AnalyzeImage) {
@@ -608,6 +722,7 @@ try {
         'restore-anchor' { if($request.anchor -isnot [string] -or $request.anchor.Length -gt 1048576){throw 'INVALID_ANCHOR'};$scanner.RestoreAnchor($request.anchor);$data=@{ok=$true} }
         'pause' { $scanner.Pause(); $data=@{ok=$true} }
         'select' { if ($request.cellId -notmatch '^r\d{1,2}c\d{1,2}$') {throw 'UNKNOWN_CELL'}; $scanner.Select($request.cellId); $data=@{ok=$true} }
+        'scroll-down' { $ticks = if ($null -ne $request.ticks) { [int]$request.ticks } else { 5 }; $scanner.ScrollDown($ticks); $data=@{ok=$true} }
         'freeze' { $w=0; $h=0; $locked=$null; $png=$scanner.Freeze($request.cellId,[ref]$w,[ref]$h,[ref]$locked); $data=@{width=$w; height=$h; image=$png; gameLocked=$locked} }
         default { throw 'INVALID_COMMAND' }
       }

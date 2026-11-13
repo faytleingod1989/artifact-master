@@ -37,3 +37,14 @@ test('rejects incomplete layout and mismatched dimensions rather than guessing',
   for (let y = 620; y < height; y++) pixels.fill(0, y * width * 4, (y + 1) * width * 4)
   expect(findArtifactFieldLayoutPixels(pixels, width, height)).toBeNull()
 })
+test('inventory card tolerates an extra star/divider band in header or body without dropping fixed-layout slicing', () => {
+  const { pixels, width, height } = panel(true, 4)
+  const rect = (x: number, y: number, w: number, h: number, color: number[]) => {
+    for (let row = y; row < y + h; row++) for (let col = x; col < x + w; col++) pixels.set([...color, 255], (row * width + col) * 4)
+  }
+  rect(15, 240, 120, 14, [230, 235, 235])
+  rect(15, 575, 160, 14, [60, 65, 75])
+  const layout = findArtifactFieldLayoutPixels(pixels, width, height)
+  expect(layout?.layoutId).toBe('inventory-card')
+  expect(layout?.fields.filter(f => f.field.startsWith('sub'))).toHaveLength(4)
+})

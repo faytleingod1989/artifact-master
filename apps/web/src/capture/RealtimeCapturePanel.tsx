@@ -2,22 +2,28 @@ import { useEffect, useRef, useState } from 'react'
 import { createCaptureSession } from '../realtimeCapture'
 import { createOcrSession } from '../artifacts/ocrService'
 import type { ArtifactRecord } from '../artifacts/types'
-import type { ImportDecision } from '../artifacts/artifactDraft'
+import type { ArtifactDraft, ImportDecision } from '../artifacts/artifactDraft'
 import { ImportReview, type DraftReviewItem } from '../imports/ImportReview'
 import { createCaptureController, type CaptureController, type CaptureStatus } from './captureController'
 import { createCaptureSuccessSound } from './captureSuccessSound'
 import { readCaptureSoundPreferences, writeCaptureSoundPreferences, type CaptureSoundPreferences } from './captureSoundPreferences'
-import { MANUAL_BATCH_LIMIT, PAGE_BATCH_LIMIT, type CaptureQueueSnapshot } from './captureQueueTypes'
+import { MANUAL_BATCH_LIMIT, PAGE_BATCH_LIMIT, STREAMING_INFLIGHT_LIMIT, type CaptureQueueSnapshot } from './captureQueueTypes'
 import { CaptureJobList } from './CaptureJobList'
 import { readNativeOcrMode, writeNativeOcrMode } from '../artifacts/ocrPreferences'
 import { usePageScan } from './usePageScan'
 import { PageScanPanel } from './PageScanPanel'
 import './capture.css'
 import { GAME_DATA } from '../artifacts/gameData'
-export type RealtimeCapturePanelProps = { existing: ArtifactRecord[]; onConfirm: (decisions: ImportDecision[]) => Promise<void>; onClose: () => void }
-const emptyQueue: CaptureQueueSnapshot = { batchId: '', accepting: false, capturing: false, ocrPaused: false, heldSourceBytes: 0, jobs: [] }
+export type RealtimeCapturePanelProps = {
+  existing: ArtifactRecord[]
+  onConfirm: (decisions: ImportDecision[]) => Promise<void>
+  onAutoCommit?: (draft: ArtifactDraft, batchId: string) => { committed: boolean; duplicateIds?: number[] }
+  onRollbackBatch?: (batchId: string) => number | void
+  onClose: () => void
+}
+const emptyQueue: CaptureQueueSnapshot = { batchId: '', accepting: false, capturing: false, ocrPaused: false, heldSourceBytes: 0, autoCommittedCount: 0, jobs: [] }
 const statusLabels: Record<CaptureStatus, string> = { inactive: '未启动', capturing: '采集中', recognizing: '识别中', pending: '待确认', retry: '需重试', failed: '失败', stopped: '已暂停' }
-export function RealtimeCapturePanel({ existing, onConfirm, onClose }: RealtimeCapturePanelProps) {
+export function RealtimeCapturePanel({ existing, onConfirm, onAutoCommit, onRollbackBatch, onClose }: RealtimeCapturePanelProps) {
   const [sources, setSources] = useState<CaptureSource[]>([]), [sourceId, setSourceId] = useState('')
   const [queue, setQueue] = useState(emptyQueue), [selectedId, setSelectedId] = useState<string>()
   const [review, setReview] = useState<DraftReviewItem[] | null>(null), [draining, setDraining] = useState(false)
@@ -25,8 +31,20 @@ export function RealtimeCapturePanel({ existing, onConfirm, onClose }: RealtimeC
   const [busy, setBusy] = useState(false), [auto, setAuto] = useState(false), [error, setError] = useState('')
   const [ocrMode, setOcrMode] = useState(readNativeOcrMode)
   const [entryMode, setEntryMode] = useState<'manual'|'page'>('manual')
+  const [autoScroll, setAutoScroll] = useState(true)
+  const [autoCommit, setAutoCommit] = useState(() => Boolean(onAutoCommit))
+  const [stopOnZeroLevel, setStopOnZeroLevel] = useState(false)
+  const [rolledBackBatchId, setRolledBackBatchId] = useState('')
+  const effectiveAutoCommit = entryMode === 'page' && autoCommit && Boolean(onAutoCommit)
   const entryModeRef = useRef(entryMode), pageActive = useRef(false)
+  const autoCommitRef = useRef(effectiveAutoCommit)
+  const stopOnZeroLevelRef = useRef(stopOnZeroLevel)
+  const zeroLevelStopReasonRef = useRef<string | undefined>(undefined)
+  const onAutoCommitRef = useRef(onAutoCommit)
   entryModeRef.current = entryMode
+  autoCommitRef.current = effectiveAutoCommit
+  stopOnZeroLevelRef.current = stopOnZeroLevel
+  onAutoCommitRef.current = onAutoCommit
   const [shortcutReady, setShortcutReady] = useState(false), [received, setReceived] = useState(0), [captured, setCaptured] = useState(0)
   const [sounds, setSounds] = useState(readCaptureSoundPreferences), [soundError, setSoundError] = useState('')
   const soundsRef = useRef(sounds), sound = useRef<ReturnType<typeof createCaptureSuccessSound> | null>(null)
@@ -52,7 +70,7 @@ export function RealtimeCapturePanel({ existing, onConfirm, onClose }: RealtimeC
     const next = { ...soundsRef.current, [kind]: enabled }; soundsRef.current = next; setSounds(next); writeCaptureSoundPreferences(next)
     setSoundError(''); if (next.captured || next.recognized) prepareSound(); else releaseSound()
   }
-  const page = usePageScan({sourceId, begin:()=>start(false), controller:()=>controller.current, queue:()=>latestQueue.current,
+  const page = usePageScan({sourceId, autoCommit: effectiveAutoCommit, autoScroll: entryMode === 'page' && autoScroll, stopRequested: () => zeroLevelStopReasonRef.current, begin:()=>start(false), controller:()=>controller.current, queue:()=>latestQueue.current,
     onActive:active=>{
       pageActive.current=active
       if(active)setShortcutReady(false)
@@ -69,6 +87,13 @@ export function RealtimeCapturePanel({ existing, onConfirm, onClose }: RealtimeC
       onQueue: next => { if (alive.current && controller.current === current) { latestQueue.current = next; setQueue(next); setSelectedId(previous => next.jobs.some(job => job.id === previous) ? previous : next.jobs[0]?.id) } },
       onCaptured: () => { if (alive.current && controller.current === current) { setCaptured(count => count + 1); play('captured') } },
       onAccepted: () => { if (alive.current && controller.current === current) play('recognized') },
+      canAutoCommit: () => autoCommitRef.current,
+      onAutoCommit: (draft, batchId) => onAutoCommitRef.current ? onAutoCommitRef.current(draft, batchId) : { committed: false },
+      onDraftRecognized: draft => {
+        if (stopOnZeroLevelRef.current && entryModeRef.current === 'page' && draft.level === 0) {
+          zeroLevelStopReasonRef.current = '遇到 +0 圣遗物，已按设置自动停止扫描。'
+        }
+      },
       onStatus: next => {
         if (!alive.current || controller.current !== current) return
         setStatus(next)
@@ -90,6 +115,7 @@ export function RealtimeCapturePanel({ existing, onConfirm, onClose }: RealtimeC
     finally { if (alive.current) setBusy(false) }
   }
   const start = async (captureInitial=true) => {
+    zeroLevelStopReasonRef.current = undefined
     prepareSound(); setSoundError(''); setBusy(true); setError(''); const token = generation.current
     try {
       if (hasSource.current && sourceId === activeSource.current) controller.current!.resumeCapture()
@@ -120,18 +146,20 @@ export function RealtimeCapturePanel({ existing, onConfirm, onClose }: RealtimeC
     finally { if (alive.current && token === reviewToken.current) setDraining(false) }
   }
   const pending = queue.jobs.filter(job => job.state === 'pending').length, failed = queue.jobs.filter(job => job.state === 'failed').length
+  const inflightCount = queue.jobs.filter(job => job.state === 'capturing' || job.state === 'queued' || job.state === 'recognizing').length
+  const autoCommittedCount = rolledBackBatchId === queue.batchId ? 0 : (queue.autoCommittedCount ?? 0)
   const selected = queue.jobs.find(job => job.id === selectedId), diagnostic = selected?.diagnostic
   if (review) return <><p className="draft-hint">本批失败 {failed} 张，返回任务列表后可重试；未自动丢弃。</p><ImportReview items={review} existing={existing} onConfirm={async decisions => { await onConfirm(decisions); for (const item of review) controller.current?.discard(item.draft.draftId) }} onCancel={() => setReview(null)} /></>
   return <section className="realtime-modal" role="dialog" aria-modal="true" aria-label="实时录入助手">
-    <header className="modal-head"><div><p>本地识别 · 确认才入库</p><h2>实时录入助手</h2></div><button className="icon-button" aria-label="关闭实时录入" disabled={busy} onClick={() => void close()}>×</button></header>
-    <p className="realtime-notice">{entryMode==='page'?'当前页模式会自动点击所选原神窗口的圣遗物格位，不自动翻页。启动后切回游戏；右键或失焦立即暂停，不读取游戏内存、不注入。':'按F8截图，听到短音后即可切下一件，不必等识别结束。自动分析详情，不读取游戏内存、不注入或操控游戏。'}</p>
+    <header className="modal-head"><div><p>{effectiveAutoCommit ? '本地识别 · 高置信度自动入库' : '本地识别 · 确认才入库'}</p><h2>实时录入助手</h2></div><button className="icon-button" aria-label="关闭实时录入" disabled={busy} onClick={() => void close()}>×</button></header>
+    <p className="realtime-notice">{entryMode==='page'?(effectiveAutoCommit?'当前页/全自动模式会自动点击所选原神窗口的圣遗物格位，高置信度 5 星件自动入库（支持整批撤销），异常或冲突件保留待人工复核；右键或失焦立即暂停，不读取游戏内存、不注入。':'当前页模式会自动点击所选原神窗口的圣遗物格位，不自动翻页。启动后切回游戏；右键或失焦立即暂停，不读取游戏内存、不注入。'):'按F8截图，听到短音后即可切下一件，不必等识别结束。自动分析详情，不读取游戏内存、不注入或操控游戏。'}</p>
     {window.artifactDesktop ? <>
       <div className="capture-head"><span>选择来源（不会自动开始）</span><button disabled={busy || queue.accepting || queue.jobs.length > 0} onClick={() => void refresh()}>刷新窗口</button></div>
       <div className="capture-source-grid">{sources.map(source => <button className={'capture-source ' + (sourceId === source.id ? 'selected' : '')} disabled={busy || queue.accepting || queue.jobs.length > 0} key={source.id} onClick={() => setSourceId(source.id)}><img src={source.thumbnail} alt="本地来源缩略图" /><span>{source.name} · {source.kind === 'screen' ? '屏幕' : '窗口'}</span></button>)}</div>
       {window.artifactDesktop.pageScan&&<fieldset className="capture-entry-modes"><legend>采集方式</legend><label><input type="radio" name="entry-mode" checked={entryMode==='manual'} disabled={busy||hasSource.current||queue.jobs.length>0} onChange={()=>setEntryMode('manual')}/>手动 F8</label><label><input type="radio" name="entry-mode" checked={entryMode==='page'} disabled={busy||hasSource.current||queue.jobs.length>0} onChange={()=>setEntryMode('page')}/>当前页扫描</label></fieldset>}
       <p className="shortcut-status">{page.active?'F8 暂停：正在扫描当前页。':shortcutReady ? 'F8 已启用：切回游戏，切换圣遗物后按 F8。' : 'F8 未启用：选择来源后点击“启动实时采集”。'} 已收到 F8：{received} 次。已捕获：{captured} 张。</p>
-      {entryMode==='page'&&<PageScanPanel snapshot={page.snapshot} disabled={busy||!sourceId||draining||queue.jobs.length>=PAGE_BATCH_LIMIT||queue.ocrPaused} onStart={()=>void page.start()} onResume={()=>void page.resume()} onNext={()=>void page.next()} onPause={page.pause}/>}
-      <p className="draft-hint">同一时刻只取一张画面；若正在截图，再次按键会明确拒绝，不延后补拍。排队 {queue.jobs.filter(j => j.state === 'queued').length} · 识别中 {queue.jobs.filter(j => j.state === 'recognizing').length} · 成功 {pending} · 失败 {failed} · 本批 {queue.jobs.length}/{entryMode === 'page' ? PAGE_BATCH_LIMIT : MANUAL_BATCH_LIMIT}</p>
+      {entryMode==='page'&&<PageScanPanel snapshot={page.snapshot} disabled={busy||!sourceId||draining||(effectiveAutoCommit?inflightCount>=STREAMING_INFLIGHT_LIMIT:queue.jobs.length>=PAGE_BATCH_LIMIT)||queue.ocrPaused} autoScroll={autoScroll} onAutoScrollChange={setAutoScroll} autoCommit={Boolean(onAutoCommit) && autoCommit} onAutoCommitChange={onAutoCommit ? setAutoCommit : undefined} stopOnZeroLevel={stopOnZeroLevel} onStopOnZeroLevelChange={setStopOnZeroLevel} totalCaptured={captured} autoCommittedCount={autoCommittedCount} pendingReviewCount={pending+failed} onReviewPending={() => void finishAndReview()} onRollbackBatch={onRollbackBatch ? () => { if (queue.batchId) { onRollbackBatch(queue.batchId); setRolledBackBatchId(queue.batchId) } } : undefined} onStart={()=>void page.start()} onResume={()=>void page.resume()} onNext={()=>void page.next()} onPause={page.pause}/>}
+      <p className="draft-hint">同一时刻只取一张画面；若正在截图，再次按键会明确拒绝，不延后补拍。排队 {queue.jobs.filter(j => j.state === 'queued').length} · 识别中 {queue.jobs.filter(j => j.state === 'recognizing').length} · {effectiveAutoCommit ? `已入库 ${autoCommittedCount} · 待复核 ${pending} · 失败 ${failed} · 队列 ${queue.jobs.length}` : `成功 ${pending} · 失败 ${failed} · 本批 ${queue.jobs.length}/${entryMode === 'page' ? PAGE_BATCH_LIMIT : MANUAL_BATCH_LIMIT}`}</p>
       {selected?.previewUrl && <section className="capture-detail-preview"><img src={selected.previewUrl} alt="自动定位的详情预览" /><div><p>第{selected.sequence}张 · 实际捕获：{selected.width} × {selected.height} 像素</p>{selected.roi && <p>自动定位：{selected.roi.width} × {selected.roi.height}；位置 {selected.roi.x}, {selected.roi.y}</p>}{selected.capturePath && <p>取帧路径：{selected.capturePath === 'native-window' ? '原生窗口会话' : '窗口快照（回退）'}{selected.captureFallbackReason ? `；${selected.captureFallbackReason}` : ''}</p>}<p>选择任务可查看对应原文与耗时；新结果不会切走当前预览。</p></div></section>}
       {entryMode==='page'&&selected&&<p className="draft-hint">游戏锁定：{selected.gameLocked===true?'已观察到锁定':'未知'}；装备角色：{selected.item?.draft.sourceCharacterId?GAME_DATA.characters[selected.item.draft.sourceCharacterId]?.name??'未知':'未知'}。未知信息不覆盖已有本地记录。</p>}
       <label><input type="checkbox" checked={auto} disabled={entryMode==='page'||!queue.accepting || queue.ocrPaused} onChange={e => { setAuto(e.target.checked); controller.current?.setAutoDetect(e.target.checked) }} />自动辅助检测</label>
