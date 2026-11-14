@@ -278,7 +278,7 @@ public class ArtifactPageScanner : IDisposable {
       int firstTop=firstRow[0].Top+(firstRow[0].Height-h)/2;
       if(spacing>=h*.8&&spacing<=h*1.8) {
         for(int top=firstTop+spacing;top+h*1.19<=height*.90;top+=spacing) {
-          var existing=rows.FirstOrDefault(line=>line.Count==longest.Count&&Math.Abs(line[0].Top-top)<=step*3);
+          var existing=rows.FirstOrDefault(line=>line.Count==longest.Count&&Math.Abs(line[0].Top-top)<=h*.35);
           if(existing!=null){top=existing[0].Top+(existing[0].Height-h)/2;continue;}
           var projected=new List<Rectangle>();
           foreach(var template in normalRow) {

@@ -318,6 +318,27 @@ test('autoScroll advances pages, skips overlapping rows via rowSignatures, and c
   expect(m.states).toContain('scrolling')
   expect(m.states.at(-1)).toBe('completed')
 })
+test('autoScroll only skips contiguous suffix-prefix overlap rows and does not silently skip non-overlapping or duplicate-signature rows', async () => {
+  const nonOverlappingSameSig = multiPageController({
+    pages: [
+      { sig: 'p1', rows: ['sigA', 'sigB'] },
+      { sig: 'p2', rows: ['sigC', 'sigA'] },
+    ],
+  })
+  await nonOverlappingSameSig.controller.start()
+  expect(nonOverlappingSameSig.frames).toEqual(['r0c0', 'r0c1', 'r1c0', 'r1c1', 'r0c0', 'r0c1', 'r1c0', 'r1c1'])
+  expect(nonOverlappingSameSig.states.at(-1)).toBe('completed')
+
+  const overlapPlusDuplicateRow = multiPageController({
+    pages: [
+      { sig: 'p1', rows: ['sigA', 'sigB'] },
+      { sig: 'p2', rows: ['sigB', 'sigB'] },
+    ],
+  })
+  await overlapPlusDuplicateRow.controller.start()
+  expect(overlapPlusDuplicateRow.frames).toEqual(['r0c0', 'r0c1', 'r1c0', 'r1c1', 'r1c0', 'r1c1'])
+  expect(overlapPlusDuplicateRow.states.at(-1)).toBe('completed')
+})
 test('autoScroll stops cleanly upon reaching a four-star boundary before scrolling further', async () => {
   const m = multiPageController({
     pages: [

@@ -1,6 +1,14 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadLibrary, saveLibrary } from './storage/libraryRepository'
-import { parseLibraryBackup, type LibraryState } from './storage/libraryValidation'
+import {
+  estimateDataUrlDecodedBytes,
+  MAX_BACKUP_FILE_BYTES,
+  MAX_CHARACTER_ASSETS_COUNT,
+  MAX_CHARACTER_ASSETS_TOTAL_BYTES,
+  MAX_SINGLE_ASSET_BYTES,
+  parseLibraryBackup,
+  type LibraryState,
+} from './storage/libraryValidation'
 import { applyImportDecisions, findDuplicateIds, recordToDraft, type ArtifactDraft, type ImportDecision } from './artifacts/artifactDraft'
 import { ManualEntry } from './imports/ManualEntry'
 import { ImportReview, type DraftReviewItem } from './imports/ImportReview'
@@ -22,7 +30,7 @@ import { QueuePage } from './pages/QueuePage'
 import { CatalogPage } from './pages/CatalogPage'
 import { createCatalogState } from './pages/catalogState'
 import { DEFAULT_FILTERS, filterAndSort } from './warehouse/warehouseModel'
-import { mergeRetainedCharacterAssets, migrateArtifactLibrary } from './artifacts/migrateArtifactData'
+import { cleanupIgnoredArtifactAssets, getLegacyArtifactAssetStats, mergeRetainedCharacterAssets, migrateArtifactLibrary } from './artifacts/migrateArtifactData'
 import { readStoredAssetMap } from './assetStorage'
 import type { ArtifactRecord } from './artifacts/types'
 import {
@@ -168,7 +176,8 @@ function App() {
   const activeCharacterName = characters[activeCharacter][0]
   const recommendation = useMemo(() => recommendBuild(artifacts, activeCharacterName, scoringOptions), [activeCharacterName, artifacts, scoringOptions])
   const warehouseRecords = useMemo(() => warehouseScope === 'character' ? artifacts.filter(item => recommendation.picks.some(pick => pick.id === item.id)) : artifacts, [warehouseScope, artifacts, recommendation])
-  const hiddenViewTarget = activePage === 'warehouse' && pendingViewId === warehouseSession.detailId && artifacts.some(item => item.id === pendingViewId) && !filterAndSort(warehouseRecords, warehouseSession.filters, warehouseSession.sort).some(item => item.id === pendingViewId)
+  const visibleWarehouseRecords = useMemo(() => filterAndSort(warehouseRecords, warehouseSession.filters, warehouseSession.sort), [warehouseRecords, warehouseSession.filters, warehouseSession.sort])
+  const hiddenViewTarget = activePage === 'warehouse' && pendingViewId === warehouseSession.detailId && artifacts.some(item => item.id === pendingViewId) && !visibleWarehouseRecords.some(item => item.id === pendingViewId)
   const queuedArtifacts = queueIds.map((id) => artifacts.find((item) => item.id === id)).filter((item): item is Artifact => Boolean(item))
 
   function toggleLock(id: number) {
@@ -271,8 +280,18 @@ function App() {
 
   function importAsset(key: string, file: File) {
     if (!storageReady || storageBusyRef.current) return
-    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 3 * 1024 * 1024) {
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > MAX_SINGLE_ASSET_BYTES) {
       window.alert('图片需为 PNG、JPG 或 WebP，且单张不超过 3 MB。')
+      return
+    }
+    const existingCharacterEntries = Object.entries(assetMap).filter(([assetKey]) => assetKey.startsWith('character:') && assetKey !== key)
+    if (existingCharacterEntries.length >= MAX_CHARACTER_ASSETS_COUNT) {
+      window.alert(`自定义角色头像最多 ${MAX_CHARACTER_ASSETS_COUNT} 张，请先替换已有头像。`)
+      return
+    }
+    const otherBytes = existingCharacterEntries.reduce((sum, [, value]) => sum + estimateDataUrlDecodedBytes(value), 0)
+    if (otherBytes + file.size > MAX_CHARACTER_ASSETS_TOTAL_BYTES) {
+      window.alert('全部角色自定义头像总量不能超过 32 MB，请先替换或减少大图后重试。')
       return
     }
     const reader = new FileReader()
@@ -285,20 +304,33 @@ function App() {
     reader.readAsDataURL(file)
   }
 
+  function cleanupLegacyArtifactAssets() {
+    if (!storageReady || storageBusyRef.current) return
+    const stats = getLegacyArtifactAssetStats(assetMap)
+    if (!stats.count) return
+    const sizeText = stats.totalBytes >= 1024 * 1024 ? `${(stats.totalBytes / (1024 * 1024)).toFixed(2)} MB` : `${Math.max(1, Math.round(stats.totalBytes / 1024))} KB`
+    if (!window.confirm(`确定永久清理 ${stats.count} 项旧版圣遗物自定义图片（约 ${sizeText}）吗？当前原版图标显示不受影响，清理后无法恢复。`)) return
+    setAssetMap(current => cleanupIgnoredArtifactAssets(current))
+  }
+
   function moveToTrash(ids: number[]) {
     if (!storageReady || storageBusyRef.current) return
-    const chosen = artifacts.filter(item => ids.includes(item.id))
-    setArtifacts(items => items.filter(item => !ids.includes(item.id)))
+    const visibleIds = new Set(visibleWarehouseRecords.map(item => item.id))
+    const chosen = artifacts.filter(item => ids.includes(item.id) && !item.locked && visibleIds.has(item.id))
+    if (!chosen.length) return
+    const chosenIds = new Set(chosen.map(item => item.id))
+    setArtifacts(items => items.filter(item => !chosenIds.has(item.id)))
     setTrash(items => [...chosen.map(item => ({ ...item, deletedAt: Date.now() })), ...items])
-    setQueueIds(current => current.filter(id => !ids.includes(id)))
-    setWarehouseSession(current => ({ ...current, selectedIds: current.selectedIds.filter(id => !ids.includes(id)), detailId: current.detailId !== undefined && ids.includes(current.detailId) ? undefined : current.detailId, comparing: false }))
+    setQueueIds(current => current.filter(id => !chosenIds.has(id)))
+    setWarehouseSession(current => ({ ...current, selectedIds: current.selectedIds.filter(id => !chosenIds.has(id)), detailId: current.detailId !== undefined && chosenIds.has(current.detailId) ? undefined : current.detailId, comparing: false }))
   }
 
   function exportLibrary() {
     const liveIds = new Set(artifacts.map(item => item.id))
     const exportedQueue = Array.from(new Set(queueIds.filter(id => liveIds.has(id)))).slice(0, 5)
     if (exportedQueue.length !== queueIds.length) setQueueFeedback('导出备份已忽略无效、重复或超额队列引用；库存和队列未改变。')
-    const blob = new Blob([JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), artifacts, trash, queueIds: exportedQueue, assets: assetMap }, null, 2)], { type: 'application/json' })
+    const exportedAssets = Object.fromEntries(Object.entries(assetMap).filter(([key]) => key.startsWith('character:')))
+    const blob = new Blob([JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), artifacts, trash, queueIds: exportedQueue, assets: exportedAssets }, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -309,8 +341,8 @@ function App() {
 
   async function importLibrary(file: File) {
     if (!storageReady || storageBusyRef.current) return
-    if (file.size > 12 * 1024 * 1024) {
-      window.alert('导入文件超过 12 MB 上限。请先拆分或移除大尺寸素材后重试。')
+    if (file.size > MAX_BACKUP_FILE_BYTES) {
+      window.alert('导入文件超过 64 MB 上限。请先拆分或移除超限素材后重试。')
       return
     }
     storageBusyRef.current = true; setStorageBusy(true)
@@ -324,7 +356,9 @@ function App() {
       const migration = migrateArtifactLibrary({ artifacts: [...payload.artifacts, ...payload.trash], assets: payload.assets ?? {} })
       const migratedArtifacts = migration.artifacts.slice(0, payload.artifacts.length)
       const migratedTrash = migration.artifacts.slice(payload.artifacts.length)
-      const mergedAssets = { ...Object.fromEntries(Object.entries(assetMap).filter(([key]) => key.startsWith('character:'))), ...migration.retainedAssets }
+      const retainedLegacyArtifacts = Object.fromEntries(Object.entries(assetMap).filter(([key]) => key.startsWith('artifact:')))
+      const retainedExistingCharacters = Object.fromEntries(Object.entries(assetMap).filter(([key]) => key.startsWith('character:')))
+      const mergedAssets = { ...retainedLegacyArtifacts, ...retainedExistingCharacters, ...migration.retainedAssets }
       const next = { artifacts: migratedArtifacts, trash: migratedTrash, queueIds: payload.queueIds, assets: mergedAssets }
       committing = true
       await saveLibrary(next)
@@ -387,7 +421,7 @@ function App() {
         {activePage === 'recommendations' && <RecommendationsPage characterName={activeCharacterName} picks={recommendation.picks as Artifact[]} score={recommendation.score} missingSlots={recommendation.missingSlots} recommendation={recommendation} scoringOptions={scoringOptions} onScoringChange={setScoringOptions} disabled={!storageReady || storageBusy} onCharacter={() => navigateTo('characters')} onView={viewRecord} onQueue={addToQueue} />}
       {activePage === 'queue' && <QueuePage scoringOptions={scoringOptions} records={queuedArtifacts} hasMembership={queueIds.length > 0} characterName={activeCharacterName} disabled={!storageReady || storageBusy} onRemove={removeFromQueue} onView={viewRecord} />}
       {activePage === 'catalog' && <CatalogPage state={catalogState} onChange={setCatalogState} />}
-      {activePage === 'assets' && <AssetsPage characters={characters} assets={assetMap} disabled={!storageReady || storageBusy} onImport={importAsset} />}
+      {activePage === 'assets' && <AssetsPage characters={characters} assets={assetMap} disabled={!storageReady || storageBusy} onImport={importAsset} onCleanupLegacy={cleanupLegacyArtifactAssets} />}
       {activePage === 'trash' && <TrashPage trash={trash} disabled={!storageReady || storageBusy} onRestore={restoreArtifact} onEmpty={emptyTrash} />}
       </section>
     </section>

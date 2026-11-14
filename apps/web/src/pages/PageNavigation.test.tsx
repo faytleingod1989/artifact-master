@@ -145,10 +145,11 @@ test('comparison survives navigation and removing one selected record cannot sho
   await user.click(screen.getByRole('button', { name: '批量移入回收站' }))
   expect(screen.queryByLabelText('圣遗物对比')).not.toBeInTheDocument()
   await user.click(nav('回收站'))
+  expect(screen.queryByText('星海的指引')).not.toBeInTheDocument()
   const row = screen.getByText('流光沙漏').closest<HTMLElement>('.trash-row')!
   await user.click(within(row).getByRole('button', { name: '恢复' }))
   await user.click(nav('圣遗物仓库'))
-  expect(screen.getByText('共 7 件 / 库存 7 件')).toBeInTheDocument()
+  expect(screen.getByText('共 8 件 / 库存 8 件')).toBeInTheDocument()
 })
 test('cross-page viewing explains a hidden target without silently clearing the warehouse filters', async () => {
   const user = await ready()

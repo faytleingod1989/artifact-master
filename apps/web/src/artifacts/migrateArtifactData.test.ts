@@ -1,15 +1,20 @@
 import { expect, test } from 'vitest'
-import { mergeRetainedCharacterAssets, migrateArtifactLibrary } from './migrateArtifactData'
+import { cleanupIgnoredArtifactAssets, getLegacyArtifactAssetStats, mergeRetainedCharacterAssets, migrateArtifactLibrary } from './migrateArtifactData'
 import { findArtifactSetByName } from './catalog'
 
-test('adds a stable key and preserves only character asset behavior', () => {
+test('adds a stable key and retains legacy artifact overrides until explicit cleanup', () => {
   const result = migrateArtifactLibrary({
     artifacts: [{ id: 42, name: '花', set: '逐影猎人', slot: '生之花', level: 0, score: 0, main: '生命值 717', subs: [], locked: false, hue: 'blue' }],
     assets: { 'artifact:42': 'data:image/png;base64,old', 'character:芙宁娜': 'data:image/png;base64,avatar' },
   })
   expect(result.artifacts[0].setKey).toBe('zhuying-lieren')
-  expect(result.retainedAssets).toEqual({ 'character:芙宁娜': 'data:image/png;base64,avatar' })
+  expect(result.retainedAssets).toEqual({
+    'artifact:42': 'data:image/png;base64,old',
+    'character:芙宁娜': 'data:image/png;base64,avatar',
+  })
   expect(result.migrationReport.ignoredArtifactOverrideIds).toEqual([42])
+  expect(getLegacyArtifactAssetStats(result.retainedAssets)).toEqual({ count: 1, totalBytes: 'data:image/png;base64,old'.length })
+  expect(cleanupIgnoredArtifactAssets(result.retainedAssets)).toEqual({ 'character:芙宁娜': 'data:image/png;base64,avatar' })
 })
 
 test('records an unresolved historical set without guessing', () => {
@@ -62,5 +67,21 @@ test('retains a character asset imported before deferred initial migration finis
   expect(assetsAfterDeferredLoad).toEqual({
     'character:legacy': 'data:image/png;base64,replaced-before-load',
     'character:imported-before-load': 'data:image/png;base64,new-avatar',
+  })
+})
+
+test('retains uncleaned legacy artifact assets in storage while merging deferred character updates', () => {
+  const migrated = migrateArtifactLibrary({
+    artifacts: [],
+    assets: { 'artifact:42': 'data:image/png;base64,legacy-artifact', 'character:legacy': 'data:image/png;base64,legacy' },
+  })
+  const merged = mergeRetainedCharacterAssets({
+    retainedAssets: migrated.retainedAssets,
+    currentAssets: { 'character:new': 'data:image/png;base64,new-avatar' },
+  })
+  expect(merged).toEqual({
+    'artifact:42': 'data:image/png;base64,legacy-artifact',
+    'character:legacy': 'data:image/png;base64,legacy',
+    'character:new': 'data:image/png;base64,new-avatar',
   })
 })

@@ -2,7 +2,7 @@ import type { CaptureSession, CapturedArtifactFrame, createCaptureSession } from
 import type { OcrSession, OcrTimings, createOcrSession } from '../artifacts/ocrService'
 import type { CaptureRoi } from './captureRegion'
 import type { DraftReviewItem } from '../imports/ImportReview'
-import { fingerprint, type ArtifactDraft } from '../artifacts/artifactDraft'
+import { fingerprint, validateDraft, type ArtifactDraft } from '../artifacts/artifactDraft'
 import { getRecognitionProblems } from '../imports/recognitionCheck'
 import { createCaptureResources } from './captureResources'
 import { MANUAL_BATCH_LIMIT, PAGE_BATCH_LIMIT, STREAMING_INFLIGHT_LIMIT, type CaptureJobSnapshot, type CaptureQueueSnapshot, type CaptureRequestOutcome } from './captureQueueTypes'
@@ -86,7 +86,8 @@ export function createCaptureController(options: CaptureControllerOptions): Capt
       lastArtifact = signature
       const draft: ArtifactDraft = { ...result.draft, source: 'realtime' as const, draftId: crypto.randomUUID(), batchId, issues: [...result.draft.issues], ...(job.snapshot.gameLocked === true ? { observedGameLocked: true } : {}) }
       options.onDraftRecognized?.(draft)
-      const autoCommitEligible = job.snapshot.trigger === 'page' && Boolean(options.canAutoCommit?.() && options.onAutoCommit) && draft.issues.length === 0
+      const blockingIssues = validateDraft(draft).filter(issue => issue.code !== 'ocr-review')
+      const autoCommitEligible = job.snapshot.trigger === 'page' && Boolean(options.canAutoCommit?.() && options.onAutoCommit) && blockingIssues.length === 0
       if (autoCommitEligible && options.onAutoCommit) {
         const commitResult = options.onAutoCommit(draft, batchId)
         if (!valid(job, token)) return

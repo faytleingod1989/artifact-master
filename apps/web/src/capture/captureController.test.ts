@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { createCaptureController } from './captureController'
-import { createManualDraft } from '../imports/manualDraft'
+import { createManualDraft, ocrToDraft } from '../imports/manualDraft'
+import { parseArtifactOcr } from '../artifacts/artifactOcr'
 import type { DraftReviewItem } from '../imports/ImportReview'
 afterEach(() => vi.restoreAllMocks())
 function setup(deferred = false, valid = true) {
@@ -130,5 +131,66 @@ test('streaming page auto-commit saves valid 5-star items, frees blobs immediate
     expect(committed).toHaveLength(1)
     expect(items).toHaveLength(2)
     expect(queueSnap?.heldSourceBytes).toBe(0)
+  } finally { await controller.dispose() }
+})
+
+test('real parseArtifactOcr + ocrToDraft clean draft auto-commits despite ocr-review warning, while dictionary warnings stay pending and invalid stats fail cleanly', async () => {
+  const committed: string[] = []
+  let items: DraftReviewItem[] = []
+  let queueSnap: import('./captureQueueTypes').CaptureQueueSnapshot | undefined
+  let sample: 'clean' | 'dictionary' | 'invalid-main' = 'clean'
+  const buildDraft = () => {
+    if (sample === 'clean') {
+      return ocrToDraft(parseArtifactOcr({
+        title: '生之花\n+0',
+        stats: '生命值 717\n暴击率+3.1%\n攻击力+19\n暴击伤害+5.4%\n防御力+16',
+        set: '影中沉凝的幻灭',
+      }), 'realtime')
+    }
+    if (sample === 'dictionary') {
+      return ocrToDraft(parseArtifactOcr({
+        title: '献与月的银蝎\n理之完',
+        stats: '暴击伤害 62.2%\n+20\n暴击率+9.9%\n元素苑能效率+22.7%\n攻击力+19\n生命值+299',
+        set: '晨星与月的晓歌',
+      }), 'realtime')
+    }
+    return ocrToDraft(parseArtifactOcr({
+      title: '生之花\n+20',
+      stats: '生命值 4781\n暴击率+3.9%\n攻击力+19\n暴击伤害+5.4%\n防御力+16',
+      set: '深廊终曲',
+    }), 'realtime')
+  }
+  const controller = createCaptureController({
+    createCaptureSession: vi.fn(async () => ({ captureFrame: async () => ({ ocrImage: new Blob(['frame']), width: 1920, height: 1080, roi }), stop: vi.fn() })),
+    createOcrSession: vi.fn(async () => ({ recognize: vi.fn(async () => ({ draft: buildDraft(), rawText: sample, confidence: 95 })), dispose: vi.fn(async () => {}) })),
+    onItems: next => { items = next },
+    onQueue: next => { queueSnap = next },
+    onStatus: vi.fn(),
+    canAutoCommit: () => true,
+    onAutoCommit: draft => { committed.push(draft.draftId); return { committed: true } },
+  })
+  vi.stubGlobal('URL', { createObjectURL: vi.fn(() => `blob:${Math.random()}`), revokeObjectURL: vi.fn() })
+  try {
+    await controller.start('window:1')
+    expect(buildDraft().issues.some(issue => issue.code === 'ocr-review')).toBe(true)
+
+    expect(controller.requestPageCapture({ pageId: 'page-1', cellId: 'r0c0', frame: { ocrImage: new Blob(['c1']), width: 1920, height: 1080, roi } })).toBe('started')
+    await controller.drain()
+    expect(committed).toHaveLength(1)
+    expect(items).toHaveLength(0)
+
+    sample = 'dictionary'
+    expect(controller.requestPageCapture({ pageId: 'page-1', cellId: 'r0c1', frame: { ocrImage: new Blob(['c2']), width: 1920, height: 1080, roi } })).toBe('started')
+    await controller.drain()
+    expect(committed).toHaveLength(1)
+    expect(items).toHaveLength(1)
+    expect(items[0].draft.issues.some(issue => issue.code === 'dictionary-match')).toBe(true)
+
+    sample = 'invalid-main'
+    expect(controller.requestPageCapture({ pageId: 'page-1', cellId: 'r1c0', frame: { ocrImage: new Blob(['c3']), width: 1920, height: 1080, roi } })).toBe('started')
+    await controller.drain()
+    expect(committed).toHaveLength(1)
+    expect(items).toHaveLength(1)
+    expect(queueSnap?.jobs.find(job => job.cellId === 'r1c0')?.state).toBe('failed')
   } finally { await controller.dispose() }
 })

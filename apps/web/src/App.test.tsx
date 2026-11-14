@@ -263,7 +263,7 @@ test('migrates imported Chinese set names, retains only character assets, and re
   expect(JSON.parse(localStorage.getItem('artifact-master-artwork-migration-v1') ?? '{}')).toMatchObject({ ignoredArtifactOverrideIds: [99], unresolvedArtifactIds: [] })
 })
 
-test('uses the missing glyph for an imported unknown set', async () => {
+test('rejects unknown set in external JSON backup while rendering missing glyph for legacy stored unknown set', async () => {
   const user = userEvent.setup()
   render(<App />)
   await screen.findByRole('button', { name: '编辑当前圣遗物' })
@@ -275,11 +275,18 @@ test('uses the missing glyph for an imported unknown set', async () => {
   if (!importInput) throw new Error('Import input was not rendered')
 
   await user.upload(importInput, payload)
+  expect(window.alert).toHaveBeenCalledWith(expect.stringMatching(/未知套装/))
+  expect(screen.getByText('共 8 件 / 库存 8 件')).toBeInTheDocument()
 
+  cleanup()
+  getStoredValue.mockImplementation(async (key) => key === 'artifact-master:artifacts'
+    ? [{ id: 100, name: '未知套装', set: '未知套装', slot: '理之冠', level: 0, score: 0, main: '暴击率 4.7%', subs: [], locked: false, hue: 'blue' }]
+    : key === 'artifact-master:queue' ? [] : undefined)
+  render(<App />)
   expect((await screen.findAllByRole('img', { name: '未知套装·理之冠原版图标' })).length).toBeGreaterThan(0)
 })
 
-test('uses the same glyph identity in the queue and trash', async () => {
+test('uses the same glyph identity in the queue and trash after unlocking a locked record', async () => {
   const user = userEvent.setup()
   render(<App />)
   await screen.findByText('已保存', { exact: true })
@@ -291,6 +298,8 @@ test('uses the same glyph identity in the queue and trash', async () => {
   expect(await within(queue).findByRole('img', { name: '深廊终曲·时之沙原版图标' })).toBeInTheDocument()
 
   await goPage('圣遗物仓库')
+  expect(screen.getByRole('button', { name: '回收' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: '解锁' }))
   await user.click(screen.getByTitle('移入回收站'))
   const trashButton = screen.getAllByRole('button', { name: /回收站/ }).find((button) => button.classList.contains('nav-item'))
   expect(trashButton).toBeDefined()
@@ -617,5 +626,72 @@ test('export makes a restorable queue from stale legacy references without chang
   expect(parseLibraryBackup(raw).queueIds).toEqual([1, 2, 3, 4, 5])
   expect(setStoredValue.mock.calls.filter(([key]) => key === 'artifact-master:queue').at(-1)?.[1]).toEqual(legacyQueue)
   expect(screen.getByText(/导出.*忽略.*库存.*队列未改变/)).toBeInTheDocument()
+})
+
+test('rejects invalid backup levels and substats without mutating warehouse, and exports/imports >12 MB multi-avatar backups', async () => {
+  const input = await readyApp()
+  const user = userEvent.setup()
+  const invalidPayloads = [
+    { version: 2, artifacts: [{ ...legacyLibrary[0], level: -1.5 }], trash: [], queueIds: [] },
+    { version: 2, artifacts: [{ ...legacyLibrary[0], subs: ['暴击率 +3.9%', '暴击伤害 +7.8%', '攻击力 +5.8%', '生命值 +5.8%', '元素精通 +23'] }], trash: [], queueIds: [] },
+    { version: 2, artifacts: [{ ...legacyLibrary[0], subs: ['暴击率 +3.9%', '暴击率 +7.8%'] }], trash: [], queueIds: [] },
+  ]
+  for (const bad of invalidPayloads) {
+    await user.upload(input, jsonLibraryFile(bad, 'bad.json'))
+    expect(window.alert).toHaveBeenCalledWith(expect.stringMatching(/导入失败/))
+  }
+  expect(screen.getByText('共 8 件 / 库存 8 件')).toBeInTheDocument()
+
+  const largeAvatarBase64 = 'A'.repeat(2_800_000)
+  const manyAvatars = Object.fromEntries(['芙宁娜', '那维莱特', '枫原万叶', '夜兰', '钟离'].map(name => [`character:${name}`, `data:image/png;base64,${largeAvatarBase64}`]))
+  cleanup()
+  getStoredValue.mockImplementation(async (key) => key === 'artifact-master:artifacts' ? structuredClone(legacyLibrary) : key === 'artifact-master:queue' ? [1] : key === 'artifact-master:assets' ? manyAvatars : undefined)
+  render(<App />)
+  await screen.findByText('已保存', { exact: true })
+
+  const backups: Blob[] = []
+  vi.mocked(URL.createObjectURL).mockImplementation(blob => { backups.push(blob as Blob); return 'blob:large-backup' })
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+  await user.click(screen.getByText('仓库备份'))
+  await user.click(screen.getByRole('button', { name: '导出 JSON' }))
+  expect(backups[0].size).toBeGreaterThan(12 * 1024 * 1024)
+  const exportedText = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result)); reader.onerror = reject
+    reader.readAsText(backups[0])
+  })
+  const restoreFile = new File([exportedText], 'large-backup.json', { type: 'application/json' })
+  Object.defineProperty(restoreFile, 'text', { value: () => Promise.resolve(exportedText) })
+  await user.upload(screen.getByText('导入 JSON').closest('label')!.querySelector('input')!, restoreFile)
+  await waitFor(() => expect(screen.getByText('已保存', { exact: true })).toBeInTheDocument())
+  expect(window.alert).toHaveBeenCalledTimes(invalidPayloads.length)
+})
+
+test('retains legacy artifact images in IndexedDB on migration and cleanup requires explicit user confirmation', async () => {
+  getStoredValue.mockImplementation(async (key) => key === 'artifact-master:artifacts'
+    ? structuredClone(legacyLibrary)
+    : key === 'artifact-master:assets'
+      ? { 'artifact:99': 'data:image/png;base64,old-artwork', 'character:芙宁娜': 'data:image/png;base64,avatar' }
+      : undefined)
+  render(<App />)
+  await screen.findByText('已保存', { exact: true })
+  expect(setStoredValue.mock.calls.filter(([key]) => key === 'artifact-master:assets').at(-1)?.[1]).toEqual({
+    'artifact:99': 'data:image/png;base64,old-artwork',
+    'character:芙宁娜': 'data:image/png;base64,avatar',
+  })
+
+  const user = userEvent.setup()
+  await goPage('本地素材')
+  expect(screen.getByText(/保留了 1 项旧版圣遗物自定义图片/)).toBeInTheDocument()
+  vi.mocked(window.confirm).mockReturnValueOnce(false)
+  await user.click(screen.getByRole('button', { name: '清理旧版圣遗物图片' }))
+  expect(setStoredValue.mock.calls.filter(([key]) => key === 'artifact-master:assets').at(-1)?.[1]).toHaveProperty('artifact:99')
+
+  vi.mocked(window.confirm).mockReturnValueOnce(true)
+  await user.click(screen.getByRole('button', { name: '清理旧版圣遗物图片' }))
+  await waitFor(() => expect(setStoredValue.mock.calls.filter(([key]) => key === 'artifact-master:assets').at(-1)?.[1]).toEqual({
+    'character:芙宁娜': 'data:image/png;base64,avatar',
+  }))
+  expect(screen.queryByRole('button', { name: '清理旧版圣遗物图片' })).not.toBeInTheDocument()
 })
 

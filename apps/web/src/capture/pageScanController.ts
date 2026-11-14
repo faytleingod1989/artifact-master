@@ -5,7 +5,7 @@ export function createPageScanController(options: PageScanOptions) {
   const sleep = options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)))
   const now = options.now ?? (() => performance.now())
   let epoch = 0, busy = false, disposed = false, baseline: PageObservation | undefined
-  let seenRowSignatures = new Set<string>()
+  let previousRowSignatures: readonly string[] = []
   let snapshot: PageScanSnapshot = { pageId: '', state: 'idle', cells: [] }
   let stopping:Promise<void>|undefined
   const publish = (next: Partial<PageScanSnapshot>) => { snapshot = { ...snapshot, ...next }; if (!disposed) options.onState(snapshot) }
@@ -94,19 +94,32 @@ export function createPageScanController(options: PageScanOptions) {
     check(observation, compareAgainstBaseline, '建立或恢复当前页')
     return observation
   }
-  const buildPageCells = (observation: PageObservation) =>
-    [...observation.cells]
+  const countOverlapRows = (prevRows: readonly string[], currRows: readonly string[]): number => {
+    const maxOverlap = Math.min(prevRows.length, currRows.length - 1)
+    for (let overlap = maxOverlap; overlap >= 1; overlap--) {
+      let matched = true
+      for (let i = 0; i < overlap; i++) {
+        const sig = currRows[i]
+        if (!sig || prevRows[prevRows.length - overlap + i] !== sig) { matched = false; break }
+      }
+      if (matched) return overlap
+    }
+    return 0
+  }
+  const buildPageCells = (observation: PageObservation) => {
+    const overlapRows = countOverlapRows(previousRowSignatures, observation.rowSignatures ?? [])
+    return [...observation.cells]
       .sort((a, b) => a.row - b.row || a.col - b.col)
-      .map(cell => {
-        const sig = observation.rowSignatures?.[cell.row]
-        const alreadySeen = Boolean(sig && seenRowSignatures.has(sig))
-        return { id: cell.id, state: alreadySeen ? 'captured' as const : 'waiting' as const }
-      })
+      .map(cell => ({
+        id: cell.id,
+        state: cell.row < overlapRows ? 'captured' as const : 'waiting' as const,
+      }))
+  }
   async function run(fresh: boolean) {
     if (disposed) return
     if (busy||stopping||snapshot.state==='pausing') { publish({ reason: '上一操作正在结束，请稍后继续；未确认停止前不恢复 F8。' }); return }
     const token = ++epoch; busy = true
-    if (fresh) seenRowSignatures.clear()
+    if (fresh) previousRowSignatures = []
     publish({ state: 'armed', reason: '请切回原神，保持背包详情页静止；右键可紧急停止。' })
     try {
       if(fresh){await options.driver.resetPage();if(!valid(token))return}
@@ -172,7 +185,8 @@ export function createPageScanController(options: PageScanOptions) {
           publish({ cells: snapshot.cells.map(item => item.id === cell.id ? { ...item, state: 'captured', jobId: result.jobId } : item) })
         }
         if (!valid(token)) return
-        baseline?.rowSignatures?.forEach(sig => { if (sig) seenRowSignatures.add(sig) })
+        const prevRowSigs = baseline?.rowSignatures ?? []
+        previousRowSignatures = prevRowSigs
         pagesScanned++
         const postPageStopReason = options.stopRequested?.()
         if (postPageStopReason) { await quiesce('completed', postPageStopReason, token); return }
@@ -206,12 +220,9 @@ export function createPageScanController(options: PageScanOptions) {
         observation = nextPageObs
         const curAnchor = observation.scrollAnchor ?? ''
         const samePageAfterScroll = Boolean((prevAnchor && curAnchor && prevAnchor === curAnchor) || (!prevAnchor && prevPageSig === observation.pageSignature))
-        const hasRowSigs = Boolean(observation.rowSignatures?.length)
-        const allRowsSeen = hasRowSigs && observation.cells.length > 0 && observation.cells.every(cell => {
-          const sig = observation.rowSignatures?.[cell.row]
-          return Boolean(sig && seenRowSignatures.has(sig))
-        })
-        if (samePageAfterScroll || allRowsSeen) {
+        const currRowSigs = observation.rowSignatures ?? []
+        const exactRowMatch = prevRowSigs.length > 0 && currRowSigs.length === prevRowSigs.length && currRowSigs.every((sig, index) => Boolean(sig) && sig === prevRowSigs[index])
+        if (samePageAfterScroll || exactRowMatch) {
           await quiesce('completed', '已到达列表底部，全自动扫描完成。', token)
           return
         }

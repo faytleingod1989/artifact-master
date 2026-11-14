@@ -11,6 +11,25 @@ type MigrateArtifactLibraryInput = {
   assets: Record<string, string>
 }
 
+export function isLegacyArtifactAssetKey(key: string): boolean {
+  return key.startsWith('artifact:')
+}
+
+export function getLegacyArtifactAssetStats(assets: Record<string, string>): { count: number; totalBytes: number } {
+  let count = 0
+  let totalBytes = 0
+  for (const [key, value] of Object.entries(assets)) {
+    if (!isLegacyArtifactAssetKey(key) || typeof value !== 'string') continue
+    count++
+    totalBytes += value.length
+  }
+  return { count, totalBytes }
+}
+
+export function cleanupIgnoredArtifactAssets(assets: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(assets).filter(([key]) => !isLegacyArtifactAssetKey(key)))
+}
+
 export function mergeRetainedCharacterAssets({ retainedAssets, currentAssets }: {
   retainedAssets: Record<string, string>
   currentAssets: Record<string, string>
@@ -45,7 +64,7 @@ export function migrateArtifactLibrary({ artifacts, assets }: MigrateArtifactLib
   })
 
   const retainedAssets = Object.fromEntries(
-    Object.entries(assets).filter(([key, value]) => key.startsWith('character:') && typeof value === 'string'),
+    Object.entries(assets).filter(([key, value]) => (key.startsWith('character:') || isLegacyArtifactAssetKey(key)) && typeof value === 'string'),
   )
 
   return {
