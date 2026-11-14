@@ -150,7 +150,7 @@ test('real parseArtifactOcr + ocrToDraft clean draft auto-commits despite ocr-re
     if (sample === 'dictionary') {
       return ocrToDraft(parseArtifactOcr({
         title: '献与月的银蝎\n理之完',
-        stats: '暴击伤害 62.2%\n+20\n暴击率+9.9%\n元素苑能效率+22.7%\n攻击力+19\n生命值+299',
+        stats: '暴击伤害 62.2%\n+20\n暴击率+10.1%\n元素苑能效率+22.7%\n攻击力+19\n生命值+299',
         set: '晨星与月的晓歌',
       }), 'realtime')
     }
@@ -192,5 +192,34 @@ test('real parseArtifactOcr + ocrToDraft clean draft auto-commits despite ocr-re
     expect(committed).toHaveLength(1)
     expect(items).toHaveLength(1)
     expect(queueSnap?.jobs.find(job => job.cellId === 'r1c0')?.state).toBe('failed')
+  } finally { await controller.dispose() }
+})
+
+test('blocks auto-commit for +0 artifact with impossible upgraded substat such as critRate 20%', async () => {
+  const committed: string[] = []
+  let queueSnap: import('./captureQueueTypes').CaptureQueueSnapshot | undefined
+  let items: DraftReviewItem[] = []
+  const draft = ocrToDraft(parseArtifactOcr({
+    title: '生之花\n+0',
+    stats: '生命值 717\n暴击率+20.0%\n攻击力+19\n暴击伤害+5.4%\n防御力+16',
+    set: '深廊终曲',
+  }), 'realtime')
+  const controller = createCaptureController({
+    createCaptureSession: vi.fn(async () => ({ captureFrame: async () => ({ ocrImage: new Blob(['frame']), width: 1920, height: 1080, roi }), stop: vi.fn() })),
+    createOcrSession: vi.fn(async () => ({ recognize: vi.fn(async () => ({ draft, rawText: 'bad-sub-tier', confidence: 95 })), dispose: vi.fn(async () => {}) })),
+    onItems: next => { items = next },
+    onQueue: next => { queueSnap = next },
+    onStatus: vi.fn(),
+    canAutoCommit: () => true,
+    onAutoCommit: d => { committed.push(d.draftId); return { committed: true } },
+  })
+  vi.stubGlobal('URL', { createObjectURL: vi.fn(() => `blob:${Math.random()}`), revokeObjectURL: vi.fn() })
+  try {
+    await controller.start('window:1')
+    expect(controller.requestPageCapture({ pageId: 'page-1', cellId: 'r0c0', frame: { ocrImage: new Blob(['c1']), width: 1920, height: 1080, roi } })).toBe('started')
+    await controller.drain()
+    expect(committed).toHaveLength(0)
+    expect(items).toHaveLength(0)
+    expect(queueSnap?.jobs.find(job => job.cellId === 'r0c0')?.state).toBe('failed')
   } finally { await controller.dispose() }
 })

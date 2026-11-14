@@ -1,6 +1,7 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadLibrary, saveLibrary } from './storage/libraryRepository'
 import {
+  decodeAvatarDataUrl,
   estimateDataUrlDecodedBytes,
   MAX_BACKUP_FILE_BYTES,
   MAX_CHARACTER_ASSETS_COUNT,
@@ -68,6 +69,7 @@ function App() {
   const mountedRef = useRef(false)
   const storageBusyRef = useRef(false)
   const mutationEpochRef = useRef(0)
+  const pendingMigrationReportRef = useRef<ReturnType<typeof migrateArtifactLibrary>['migrationReport'] | undefined>(undefined)
   const [showModal, setShowModal] = useState(false)
   const [showOcr, setShowOcr] = useState(false)
   const [showRealtime, setShowRealtime] = useState(false)
@@ -128,17 +130,17 @@ function App() {
       const startupAssets = savedAssets ?? readStoredAssetMap()
       const migration = migrateArtifactLibrary({ artifacts: [...savedArtifacts, ...savedTrash], assets: startupAssets })
       const mergedAssets = mergeRetainedCharacterAssets({ retainedAssets: migration.retainedAssets, currentAssets: startupAssets })
+      pendingMigrationReportRef.current = migration.migrationReport
       setArtifacts(migration.artifacts.slice(0, savedArtifacts.length))
       setSelectedId(migration.artifacts[0]?.id ?? 0)
       setAssetMap(mergedAssets)
-      mirrorCharacterAssets(mergedAssets, migration.migrationReport, true)
       setTrash(migration.artifacts.slice(savedArtifacts.length))
       setQueueIds(savedQueue)
       setStorageError('')
       setStorageReady(true)
     }).catch((error: unknown) => { if (!cancelled) setStorageError(`读取本地仓库失败，未覆盖任何数据。请重试或先保留备份。${error instanceof Error ? error.message : ''}`) })
     return () => { cancelled = true }
-  }, [reloadStorage, mirrorCharacterAssets])
+  }, [reloadStorage])
 
   const saveCurrentSnapshot = useCallback(async () => {
     if (!storageReady || storageBusyRef.current) return
@@ -159,7 +161,9 @@ function App() {
       pendingSignatureRef.current = ''
       setStorageError('')
       setSaveStatus('saved')
-      if (next.assets) mirrorCharacterAssets(next.assets)
+      const migrationReport = pendingMigrationReportRef.current
+      pendingMigrationReportRef.current = undefined
+      if (next.assets) mirrorCharacterAssets(next.assets, migrationReport, migrationReport !== undefined)
     } catch {
       if (!mountedRef.current || request !== saveRequestRef.current || signatureRef.current !== currentSignature) return
       pendingSignatureRef.current = ''
@@ -299,7 +303,13 @@ function App() {
     reader.onload = () => {
       if (!mountedRef.current || storageBusyRef.current || epoch !== mutationEpochRef.current) return
       const value = String(reader.result)
-      setAssetMap(current => ({ ...current, [key]: value }))
+      void decodeAvatarDataUrl(value).then(() => {
+        if (!mountedRef.current || storageBusyRef.current || epoch !== mutationEpochRef.current) return
+        setAssetMap(current => ({ ...current, [key]: value }))
+      }, (error: unknown) => {
+        if (!mountedRef.current || epoch !== mutationEpochRef.current) return
+        window.alert(`头像导入失败：${error instanceof Error ? error.message : '图片无法解码。'}`)
+      })
     }
     reader.readAsDataURL(file)
   }
@@ -351,6 +361,9 @@ function App() {
     let committing = false
     try {
       const payload = parseLibraryBackup(await file.text())
+      for (const [assetKey, assetValue] of Object.entries(payload.assets ?? {})) {
+        if (assetKey.startsWith('character:')) await decodeAvatarDataUrl(assetValue)
+      }
       if (!mountedRef.current) return
       if (artifacts.length && !window.confirm('导入会替换当前本地仓库。建议先导出 JSON 备份，是否继续？')) return
       const migration = migrateArtifactLibrary({ artifacts: [...payload.artifacts, ...payload.trash], assets: payload.assets ?? {} })
@@ -363,6 +376,7 @@ function App() {
       committing = true
       await saveLibrary(next)
       if (!mountedRef.current) return
+      pendingMigrationReportRef.current = undefined
       lastSavedRef.current = JSON.stringify(next)
       setSavedSignature(lastSavedRef.current)
       setArtifacts(migratedArtifacts)

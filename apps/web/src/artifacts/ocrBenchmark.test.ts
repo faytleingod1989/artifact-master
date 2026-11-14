@@ -8,7 +8,7 @@ test('a worker failure is not credited as a successful negative-image rejection'
 test('a 3.9 to 9.9 substitution fails the entire item; order alone does not', async () => {
   const expected: OcrBenchmarkCase['expected'] = { setKey: 'emblem-of-severed-fate', slot: '理之冠', level: 20, main: { key: 'critDamage', value: 62.2 }, subs: [{ key: 'critRate', value: 3.9 }, { key: 'defFlat', value: 16 }, { key: 'atkFlat', value: 19 }, { key: 'energyRecharge', value: 6.5 }] }
   const item: OcrBenchmarkCase = { id: 'numeric-error', image: new Blob(), roi: { x: 0, y: 0, width: 1, height: 1 }, expected }
-  const draft = { ...createManualDraft(), ...expected, subs: [{ key: 'defFlat' as const, value: 16 }, { key: 'critRate' as const, value: 9.9 }, { key: 'atkFlat' as const, value: 19 }, { key: 'energyRecharge' as const, value: 6.5 }] }
+  const draft = { ...createManualDraft(), ...expected, subs: [{ key: 'defFlat' as const, value: 16 }, { key: 'critRate' as const, value: 9.7 }, { key: 'atkFlat' as const, value: 19 }, { key: 'energyRecharge' as const, value: 6.5 }] }
   const session = { recognize: async () => ({ draft, rawText: '', confidence: 90 }), dispose: async () => {} }
   const report = await runOcrBenchmark([item], session)
   expect(report.exact).toBe(0); expect(report.failures[0].fields).toContain('subs.critRate')
@@ -16,7 +16,7 @@ test('a 3.9 to 9.9 substitution fails the entire item; order alone does not', as
 })
 test('a plausible but wrong accepted number is counted as false acceptance', async () => {
   const expected: OcrBenchmarkCase['expected'] = { setKey: 'emblem-of-severed-fate', slot: '生之花', level: 20, main: { key: 'hpFlat', value: 4780 }, subs: [{ key: 'critRate', value: 3.9 }, { key: 'defFlat', value: 16 }, { key: 'atkFlat', value: 19 }, { key: 'energyRecharge', value: 6.5 }] }
-  const draft = { ...createManualDraft(), ...expected, subs: expected.subs.map(sub => sub.key === 'critRate' ? { ...sub, value: 9.9 } : sub) }
+  const draft = { ...createManualDraft(), ...expected, subs: expected.subs.map(sub => sub.key === 'critRate' ? { ...sub, value: 9.7 } : sub) }
   const report = await runOcrBenchmark([{ id: 'wrong-valid-number', image: new Blob(), roi: { x: 0, y: 0, width: 1, height: 1 }, expected }], { recognize: async () => ({ draft, rawText: '', confidence: 99 }), dispose: async () => {} })
   expect(report).toMatchObject({ total: 1, exact: 0, accepted: 1, rejected: 0, falseAccepted: 1 })
 })

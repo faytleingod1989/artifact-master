@@ -114,3 +114,23 @@ test('draftToRecord persists optional batchId for batch rollback and recordToDra
   const legacyRecord = draftToRecord(valid, 102)
   expect('batchId' in (legacyRecord.source ?? {})).toBe(false)
 })
+
+test('blocks substats whose roll tiers or cumulative upgrades exceed the artifact level', () => {
+  const zeroWithTwentyCrit = {
+    ...valid,
+    slot: '生之花' as const,
+    level: 0,
+    main: { key: 'hpFlat' as const, value: 717 },
+    subs: [{ key: 'critRate' as const, value: 20 }, { key: 'atkFlat' as const, value: 19 }, { key: 'defFlat' as const, value: 16 }],
+  }
+  expect(validateDraft(zeroWithTwentyCrit).some(i => i.severity === 'error' && i.field === 'subs.0')).toBe(true)
+
+  const plusFourOverBudget = {
+    ...valid,
+    slot: '生之花' as const,
+    level: 4,
+    main: { key: 'hpFlat' as const, value: 1530 },
+    subs: [{ key: 'critRate' as const, value: 7.8 }, { key: 'critDamage' as const, value: 15.5 }, { key: 'atkFlat' as const, value: 19 }, { key: 'defFlat' as const, value: 16 }],
+  }
+  expect(validateDraft(plusFourOverBudget).some(i => i.severity === 'error' && i.field === 'subs')).toBe(true)
+})

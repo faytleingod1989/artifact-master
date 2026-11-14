@@ -264,7 +264,7 @@ test('neighbor card glow changing pageSignature while scrollAnchor holds does no
   expect(x.state().state).toBe('page-complete')
 })
 function multiPageController(opts: { autoScroll?: boolean; stopRequested?: () => string | undefined; onEnqueue?: (cellId: string) => void; pages: Array<{ sig: string; rows: string[]; hasFourStar?: boolean }> }) {
-  let pageIndex = 0, seq = 0, selected: string | undefined = 'r0c0', stops = 0
+  let clock = 0, pageIndex = 0, seq = 0, selected: string | undefined = 'r0c0', stops = 0
   const states: string[] = [], clicks: string[] = [], frames: string[] = [], scrolls: number[] = []
   let current = opts.pages[0]
   const mkCells = (rowCount: number) => Array.from({ length: rowCount * 2 }, (_, idx) => {
@@ -275,7 +275,8 @@ function multiPageController(opts: { autoScroll?: boolean; stopRequested?: () =>
     sourceId: 'window:123:0',
     autoScroll: () => opts.autoScroll ?? true,
     stopRequested: opts.stopRequested,
-    sleep: async () => {},
+    now: () => clock,
+    sleep: async ms => { clock += ms },
     random: () => 0.5,
     canCapture: () => true,
     enqueue: (_frame, _pageId, cellId) => { opts.onEnqueue?.(cellId); frames.push(cellId); return { outcome: 'started', jobId: `job-${frames.length}` } },
@@ -338,6 +339,26 @@ test('autoScroll only skips contiguous suffix-prefix overlap rows and does not s
   await overlapPlusDuplicateRow.controller.start()
   expect(overlapPlusDuplicateRow.frames).toEqual(['r0c0', 'r0c1', 'r1c0', 'r1c1', 'r1c0', 'r1c1'])
   expect(overlapPlusDuplicateRow.states.at(-1)).toBe('completed')
+
+  const scrolledWithIdenticalRows = multiPageController({
+    pages: [
+      { sig: 'p1', rows: ['sigA', 'sigB'] },
+      { sig: 'p2', rows: ['sigA', 'sigB'] },
+    ],
+  })
+  await scrolledWithIdenticalRows.controller.start()
+  expect(scrolledWithIdenticalRows.frames).toEqual(['r0c0', 'r0c1', 'r1c0', 'r1c1', 'r0c0', 'r0c1', 'r1c0', 'r1c1'])
+  expect(scrolledWithIdenticalRows.states.at(-1)).toBe('completed')
+
+  const scrolledUniformRows = multiPageController({
+    pages: [
+      { sig: 'p1', rows: ['sigA', 'sigA'] },
+      { sig: 'p2', rows: ['sigA', 'sigA'] },
+    ],
+  })
+  await scrolledUniformRows.controller.start()
+  expect(scrolledUniformRows.frames).toEqual(['r0c0', 'r0c1', 'r1c0', 'r1c1', 'r0c0', 'r0c1', 'r1c0', 'r1c1'])
+  expect(scrolledUniformRows.states.at(-1)).toBe('completed')
 })
 test('autoScroll stops cleanly upon reaching a four-star boundary before scrolling further', async () => {
   const m = multiPageController({

@@ -1,6 +1,7 @@
 import { FIVE_STAR_ARTIFACT_SETS } from './catalog'
 import { GAME_DATA, getPieceName } from './gameData'
-import { formatStat, getExpectedMain, parseStat, STAT_DEFINITIONS, SUB_STAT_KEYS, type StatValue } from './statModel'
+import { displayUnits, getRollSums } from '../potential/enhancementRules'
+import { formatStat, getExpectedMain, parseStat, STAT_DEFINITIONS, SUB_STAT_KEYS, type StatKey, type StatValue } from './statModel'
 import { ARTIFACT_SLOTS, type ArtifactRecord, type ArtifactSetKey, type ArtifactSlot } from './types'
 
 export type DraftSource = 'manual' | 'realtime' | 'screenshot' | 'uid'
@@ -13,13 +14,32 @@ export type ArtifactDraft = {
 }
 export type ImportDecision = { draft: ArtifactDraft; action: 'skip' | 'add' | 'update'; targetId?: number }
 export type ImportResult = { artifacts: ArtifactRecord[]; added: number; updated: number; skipped: number }
+export function getValidRollCountsForLevel(key: StatKey, value: number, level?: number): number[] {
+  const def = STAT_DEFINITIONS[key]
+  if (!def || !Number.isFinite(value)) return []
+  const precision = def.percent ? 10 : 1
+  if (Math.abs(value * precision - Math.round(value * precision)) > 1e-6) return []
+  const scaledValue = Math.round(value * precision)
+  const maxRolls = typeof level === 'number' && Number.isInteger(level) && level >= 0 && level <= 20
+    ? 1 + Math.floor(level / 4)
+    : 6
+  const valid: number[] = []
+  for (let rolls = 1; rolls <= maxRolls; rolls++) {
+    if (getRollSums(key, rolls).some(units => Math.round(displayUnits(key, units) * precision) === scaledValue)) {
+      valid.push(rolls)
+    }
+  }
+  return valid
+}
+
 export function validateDraft(draft: ArtifactDraft): DraftIssue[] {
   const issues = [...draft.issues]
   const error = (field: string, message: string) => issues.push({ field, code: 'invalid', message, severity: 'error' })
   if (!FIVE_STAR_ARTIFACT_SETS.some(set => set.key === draft.setKey)) error('setKey', '请选择已核实套装。')
   if (!draft.slot || !ARTIFACT_SLOTS.includes(draft.slot)) error('slot', '请选择部位。')
   if (draft.rarity !== 5) error('rarity', '只收入五星圣遗物。')
-  if (!Number.isInteger(draft.level) || draft.level! < 0 || draft.level! > 20) error('level', '等级须为0～20整数。')
+  const levelOk = Number.isInteger(draft.level) && draft.level! >= 0 && draft.level! <= 20
+  if (!levelOk) error('level', '等级须为0～20整数。')
   if (!draft.main || !Number.isFinite(draft.main.value) || !(draft.main.key in STAT_DEFINITIONS)) error('main', '主词条未识别或数值非法。')
   else if (draft.slot && Number.isInteger(draft.level)) {
     const expected = getExpectedMain(draft.slot, draft.main.key, draft.level!)
@@ -28,18 +48,30 @@ export function validateDraft(draft: ArtifactDraft): DraftIssue[] {
   }
   if (draft.subs.length > 4) error('subs', '副词条最多四条。')
   const seen = new Set<string>()
+  let minUpgradesSum = 0
   draft.subs.forEach((sub, index) => {
     const bounds = GAME_DATA.subBounds[sub.key]
-    if (!SUB_STAT_KEYS.includes(sub.key) || !bounds || !Number.isFinite(sub.value) || sub.value < bounds.min || sub.value > bounds.max) error(`subs.${index}`, '副词条类型或数值不在五星合法范围。')
+    const boundsOk = SUB_STAT_KEYS.includes(sub.key) && Boolean(bounds) && Number.isFinite(sub.value) && sub.value >= bounds!.min && sub.value <= bounds!.max
+    if (!boundsOk) error(`subs.${index}`, '副词条类型或数值不在五星合法范围。')
+    else {
+      const validRolls = getValidRollCountsForLevel(sub.key, sub.value, levelOk ? draft.level : undefined)
+      if (!validRolls.length) error(`subs.${index}`, '副词条数值与当前等级强化档位不符。')
+      else minUpgradesSum += Math.min(...validRolls) - 1
+    }
     if (seen.has(sub.key) || sub.key === draft.main?.key) error(`subs.${index}`, '副词条重复或与主词条相同。')
     seen.add(sub.key)
   })
+  if (levelOk && minUpgradesSum > Math.floor(draft.level! / 4)) {
+    error('subs', '副词条累计强化次数超过当前等级上限。')
+  }
   const pending = draft.pendingSubs ?? []
   if (pending.length && (pending.length !== 1 || draft.subs.length !== 3 || draft.level === undefined || draft.level >= 4)) error('pendingSubs', '待激活副词条仅适用于低于4级且有三条生效副词条的圣遗物，不能代替缺失的生效词条。')
   pending.forEach((sub, index) => {
     const bounds = GAME_DATA.subBounds[sub.key]
     const precision = STAT_DEFINITIONS[sub.key]?.percent ? 10 : 1
-    if (!SUB_STAT_KEYS.includes(sub.key) || !bounds || !Number.isFinite(sub.value) || sub.value < bounds.min || sub.value > bounds.max || Math.abs(sub.value * precision - Math.round(sub.value * precision)) > 1e-6) error(`pendingSubs.${index}`, '待激活副词条类型、数值或显示精度异常，请核实原文。')
+    const formatOk = SUB_STAT_KEYS.includes(sub.key) && Boolean(bounds) && Number.isFinite(sub.value) && sub.value >= bounds!.min && sub.value <= bounds!.max && Math.abs(sub.value * precision - Math.round(sub.value * precision)) <= 1e-6
+    if (!formatOk) error(`pendingSubs.${index}`, '待激活副词条类型、数值或显示精度异常，请核实原文。')
+    else if (!getValidRollCountsForLevel(sub.key, sub.value, 0).length) error(`pendingSubs.${index}`, '待激活词条数值不符合初始档位。')
     if (seen.has(sub.key) || sub.key === draft.main?.key) error(`pendingSubs.${index}`, '待激活副词条重复或与主词条相同。')
     seen.add(sub.key)
   })

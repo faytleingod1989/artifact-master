@@ -95,6 +95,9 @@ export function createPageScanController(options: PageScanOptions) {
     return observation
   }
   const countOverlapRows = (prevRows: readonly string[], currRows: readonly string[]): number => {
+    if (prevRows.length > 0 && prevRows.length === currRows.length && currRows.every((sig, index) => Boolean(sig) && sig === prevRows[index])) {
+      return 0
+    }
     const maxOverlap = Math.min(prevRows.length, currRows.length - 1)
     for (let overlap = maxOverlap; overlap >= 1; overlap--) {
       let matched = true
@@ -185,8 +188,7 @@ export function createPageScanController(options: PageScanOptions) {
           publish({ cells: snapshot.cells.map(item => item.id === cell.id ? { ...item, state: 'captured', jobId: result.jobId } : item) })
         }
         if (!valid(token)) return
-        const prevRowSigs = baseline?.rowSignatures ?? []
-        previousRowSignatures = prevRowSigs
+        previousRowSignatures = baseline?.rowSignatures ?? []
         pagesScanned++
         const postPageStopReason = options.stopRequested?.()
         if (postPageStopReason) { await quiesce('completed', postPageStopReason, token); return }
@@ -219,10 +221,9 @@ export function createPageScanController(options: PageScanOptions) {
         if (!nextPageObs || !valid(token)) return
         observation = nextPageObs
         const curAnchor = observation.scrollAnchor ?? ''
-        const samePageAfterScroll = Boolean((prevAnchor && curAnchor && prevAnchor === curAnchor) || (!prevAnchor && prevPageSig === observation.pageSignature))
-        const currRowSigs = observation.rowSignatures ?? []
-        const exactRowMatch = prevRowSigs.length > 0 && currRowSigs.length === prevRowSigs.length && currRowSigs.every((sig, index) => Boolean(sig) && sig === prevRowSigs[index])
-        if (samePageAfterScroll || exactRowMatch) {
+        const hasScrollAnchor = Boolean(prevAnchor && curAnchor)
+        const samePageAfterScroll = hasScrollAnchor ? prevAnchor === curAnchor : prevPageSig === observation.pageSignature
+        if (samePageAfterScroll) {
           await quiesce('completed', '已到达列表底部，全自动扫描完成。', token)
           return
         }
